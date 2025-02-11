@@ -556,7 +556,7 @@ class nifti_zarr_loader:
         """
         store = self.zarr_store_type(self.locationGenerator(res))
         logger.info("OPENING ARRAYS")
-        store = self.wrap_store_in_chunk_cache(store)
+        #store = self.wrap_store_in_chunk_cache(store)
         # if self.cache is not None:
         #     logger.info('OPENING CHUNK CACHE ARRAYS')
         #     from zarr_stores.zarr_disk_cache import Disk_Cache_Store
