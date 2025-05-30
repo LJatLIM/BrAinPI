@@ -50,6 +50,9 @@ class ome_zarr_loader:
         self.squeeze = squeeze
         self.cache = cache
         self.metaData = {}
+        self.file_stat = os.stat(location)
+        self.file_ino = str(self.file_stat.st_ino)
+        self.modification_time = str(self.file_stat.st_mtime)
 
         # Open zarr store
         self.zarr_store = zarr_store_type # Only relevant for non-s3 datasets
@@ -89,7 +92,7 @@ class ome_zarr_loader:
             for t,c in itertools.product(range(self.TimePoints),range(self.Channels)):
                 
                 # Collect attribute info
-                self.metaData[r,t,c,'shape'] = (t+1,c+1,*array.shape[2:])
+                self.metaData[r,t,c,'shape'] = (1,1,*array.shape[2:])
                 ## Need to extract resolution by some other means.  For now, default to 1,1,1 and divide by 2 for each series
                 self.metaData[r,t,c,'resolution'] = self.dataset_scales[r][2:]
                          
@@ -135,7 +138,14 @@ class ome_zarr_loader:
             ResolutionLevelLock (int): The resolution level to lock.
         """
         self.ResolutionLevelLock = ResolutionLevelLock
-        self.shape = self.metaData[self.ResolutionLevelLock,0,0,'shape']
+        # self.shape = self.metaData[self.ResolutionLevelLock,0,0,'shape']
+        self.shape = (
+            self.TimePoints,
+            self.Channels,
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-3],
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-2],
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-1]
+        )
         self.ndim = len(self.shape)
         self.chunks = self.metaData[self.ResolutionLevelLock,0,0,'chunks']
         self.resolution = self.metaData[self.ResolutionLevelLock,0,0,'resolution']
@@ -230,7 +240,7 @@ class ome_zarr_loader:
         incomingSlices = (r,t,c,z,y,x)
         logger.info(incomingSlices)
         if self.cache is not None:
-            key = f'{self.location}_getSlice_{str(incomingSlices)}'
+            key = f'{self.file_ino + self.modification_time + str(incomingSlices)}'
             # key = self.location + '_getSlice_' + str(incomingSlices)
             result = self.cache.get(key, default=None, retry=True)
             if result is not None:
@@ -250,7 +260,7 @@ class ome_zarr_loader:
             # print(f"  Number of shards: {shards_len}")
             # print(f"  Total size limit: {total_size} GB")
             # print(f"  Current size: {current_size} GB\n") 
-            self.cache.set(key, result, expire=None, tag=self.location, retry=True)
+            self.cache.set(key, result, expire=None, tag=self.file_ino + self.modification_time, retry=True)
             logger.info(f'loader cache saved')
             # test = True
             # while test:
@@ -516,7 +526,7 @@ from zarr.util import (buffer_size, json_loads, nolock, normalize_chunks,
 from zarr._storage.absstore import ABSStore  # noqa: F401
 
 from zarr._storage.store import Store, array_meta_key
-
+from s3_utils import s3_get_dir_contents, s3_isdir, s3_isfile
 _prog_number = re.compile(r'^\d+$')
 
 ## BOTO3 Way to do dir and files from s3
