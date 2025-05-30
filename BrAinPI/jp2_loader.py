@@ -148,8 +148,11 @@ class jp2_loader:
     def __init__(
         self,
         location,
-        pyramid_images_connection,
-        settings,
+        pyramid_images_connection = {},
+        pyramids_images_allowed_store_size_gb = 100,
+        pyramids_images_allowed_generation_size_gb = 10,
+        pyramids_images_store=None,
+        extension_type=".ome.tif",
         ResolutionLevelLock=None,
         verbose=None,
         squeeze=True,
@@ -159,7 +162,10 @@ class jp2_loader:
         Args:
             location (str): Path to the JP2 file.
             pyramid_images_connection (dict): A dictionary for mapping hash values to pyramid images.
-            settings (configparser.ConfigParser): Settings for pyramid generation.
+            pyramids_images_allowed_store_size_gb (float): Maximum allowed size for the pyramid images store in GB. Defaults to 100.
+            pyramids_images_allowed_generation_size_gb (float): Maximum allowed size for the pyramid image generation in GB. Defaults to 10.
+            pyramids_images_store (str, optional): Directory for storing pyramid images. Defaults to None.
+            extension_type (str, optional): File extension for the generated pyramid images. Defaults to ".ome.tif".
             ResolutionLevelLock (int, optional): Initial resolution lock level. Defaults to 0.
             verbose (bool, optional): Verbose output flag. Defaults to None.
             squeeze (bool, optional): If True, squeeze output arrays. Defaults to True.
@@ -180,17 +186,20 @@ class jp2_loader:
         self.file_ino = str(self.file_stat.st_ino)
         self.modification_time = str(self.file_stat.st_mtime)
         self.file_size = self.file_stat.st_size
-        self.settings = settings
-        self.allowed_store_size_gb = float(
-            self.settings.get("jp2_loader", "pyramids_images_allowed_store_size_gb")
-        )
+        # self.allowed_store_size_gb = float(
+        #     self.settings.get("jp2_loader", "pyramids_images_allowed_store_size_gb")
+        # )
+        self.allowed_store_size_gb = float(pyramids_images_allowed_store_size_gb)
         self.allowed_store_size_byte = self.allowed_store_size_gb * 1024 * 1024 * 1024
-        self.allowed_file_size_gb = float(
-            self.settings.get(
-                "jp2_loader", "pyramids_images_allowed_generation_size_gb"
-            )
-        )
+        # self.allowed_file_size_gb = float(
+        #     self.settings.get(
+        #         "jp2_loader", "pyramids_images_allowed_generation_size_gb"
+        #     )
+        # )
+        self.allowed_file_size_gb = float(pyramids_images_allowed_generation_size_gb)
         self.allowed_file_size_byte = self.allowed_file_size_gb * 1024 * 1024 * 1024
+        self.pyramids_images_store = pyramids_images_store
+        self.extension_type = extension_type
         self.pyramid_dic = pyramid_images_connection
         self.verbose = verbose
         self.squeeze = squeeze
@@ -199,16 +208,17 @@ class jp2_loader:
         if self.datapath.endswith(".jp2"):
             jp2_img = self.validate_jp2_file(self.datapath)
             self.tile_size = jp2_img.tilesize if jp2_img.tilesize else (128, 128)
-
-
-
             self.pyramid_builders(jp2_img)
             self.tif_obj = tiff_loader.tiff_loader(
                 self.datapath,
                 pyramid_images_connection,
-                self.cache,
-                self.settings,
-                ResolutionLevelLock,
+                self.allowed_store_size_gb,
+                self.allowed_file_size_gb,
+                self.pyramids_images_store,
+                self.extension_type,
+                ResolutionLevelLock = self.ResolutionLevelLock,
+                squeeze=self.squeeze,
+                cache=self.cache,
             )
             self.metaData = self.tif_obj.metaData
             self.ResolutionLevelLock = self.tif_obj.ResolutionLevelLock
@@ -261,11 +271,12 @@ class jp2_loader:
             None
         """
         hash_value = calculate_hash(self.file_ino + self.modification_time)
-        pyramids_images_store = self.settings.get("jp2_loader", "pyramids_images_store")
+        # pyramids_images_store = self.settings.get("jp2_loader", "pyramids_images_store")
+        pyramids_images_store = self.pyramids_images_store
         pyramids_images_store_dir = (
             pyramids_images_store + hash_value[0:2] + "/" + hash_value[2:4] + "/"
         )
-        suffix = self.settings.get("jp2_loader", "extension_type")
+        suffix = self.extension_type
         pyramid_image_location = pyramids_images_store_dir + hash_value + suffix
         if self.pyramid_dic.get(hash_value) and os.path.exists(pyramid_image_location):
             self.datapath = self.pyramid_dic.get(hash_value)
@@ -384,7 +395,14 @@ class jp2_loader:
             None
         """
         self.ResolutionLevelLock = ResolutionLevelLock
-        self.shape = self.metaData[self.ResolutionLevelLock, 0, 0, "shape"]
+        # self.shape = self.metaData[self.ResolutionLevelLock, 0, 0, "shape"]
+        self.shape = (
+            self.TimePoints,
+            self.Channels,
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-3],
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-2],
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-1]
+        )
         self.ndim = len(self.shape)
         self.chunks = self.metaData[self.ResolutionLevelLock, 0, 0, "chunks"]
         self.resolution = self.metaData[self.ResolutionLevelLock, 0, 0, "resolution"]
