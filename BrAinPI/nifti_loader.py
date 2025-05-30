@@ -74,8 +74,11 @@ class nifti_zarr_loader:
     def __init__(
         self,
         location,
-        pyramid_images_connection,
-        settings,
+        pyramid_images_connection={},
+        pyramids_images_allowed_store_size_gb=100,
+        pyramids_images_allowed_generation_size_gb=2,
+        pyramids_images_store=None,
+        extension_type=".nii.zarr",
         ResolutionLevelLock=None,
         zarr_store_type: StoreLike = NestedDirectoryStore,
         verbose=None,
@@ -88,7 +91,10 @@ class nifti_zarr_loader:
         Args:
             location (str): Path to the NIfTI file.
             pyramid_images_connection (dict): Mapping of hash values to pyramid images.
-            settings (configparser.ConfigParser): Configuration settings.
+            pyramids_images_allowed_store_size_gb (float): Maximum allowed size for the pyramid images store in GB. Defaults to 100.
+            pyramids_images_allowed_generation_size_gb (float): Maximum allowed size for pyramid generation in GB. Defaults to 2.
+            pyramids_images_store (str, optional): Directory for storing pyramid images. Defaults to None.
+            extension_type (str, optional): File extension for the generated pyramid images. Defaults to ".nii.zarr".
             ResolutionLevelLock (int, optional): Lock for accessing a specific resolution level. Defaults to None.
             zarr_store_type (zarr.storage, optional): Zarr store type. Defaults to NestedDirectoryStore.
             verbose (bool, optional): Verbose logging. Defaults to None.
@@ -105,17 +111,19 @@ class nifti_zarr_loader:
         self.file_ino = str(self.file_stat.st_ino)
         self.modification_time = str(self.file_stat.st_mtime)
         self.file_size = self.file_stat.st_size
-        self.settings = settings
-        self.allowed_store_size_gb = float(
-            self.settings.get("nifti_loader", "pyramids_images_allowed_store_size_gb")
-        )
+        # self.allowed_store_size_gb = float(
+        #     self.settings.get("nifti_loader", "pyramids_images_allowed_store_size_gb")
+        # )
+        self.allowed_store_size_gb = float(pyramids_images_allowed_store_size_gb)
         self.allowed_store_size_byte = self.allowed_store_size_gb * 1024 * 1024 * 1024
-        self.allowed_file_size_gb = float(
-            self.settings.get("nifti_loader", "pyramids_images_allowed_generation_size_gb")
-        )
+        # self.allowed_file_size_gb = float(
+        #     self.settings.get("nifti_loader", "pyramids_images_allowed_generation_size_gb")
+        # )
+        self.allowed_file_size_gb = float(pyramids_images_allowed_generation_size_gb)
         self.allowed_file_size_byte = self.allowed_file_size_gb * 1024 * 1024 * 1024
         self.pyramid_dic = pyramid_images_connection
-
+        self.pyramids_images_store = pyramids_images_store
+        self.extension_type = extension_type
         self.verbose = verbose
         self.squeeze = squeeze
         self.cache = cache
@@ -190,8 +198,18 @@ class nifti_zarr_loader:
             for t, c in itertools.product(range(self.TimePoints), range(self.Channels)):
 
                 # Collect attribute info
-                self.metaData[r, t, c, "shape"] = array.shape
-                
+                # self.metaData[r, t, c, "shape"] = array.shape
+                # shape = array.shape
+                # if len(shape) != 5:
+                #     # Prepend 1 to the shape to make its length 5
+                #     new_shape = (1,) * (5 - len(shape)) + shape
+                #     self.metaData[r, t, c, "shape"] = new_shape
+                # else:
+                #     self.metaData[r, t, c, "shape"] = shape
+                shape_z = array.shape[self.dim_pos_dic.get("z")] if self.dim_pos_dic.get("z") is not None else 1
+                shape_y = array.shape[self.dim_pos_dic.get("y")] if self.dim_pos_dic.get("y") is not None else 1
+                shape_x = array.shape[self.dim_pos_dic.get("x")] if self.dim_pos_dic.get("x") is not None else 1
+                self.metaData[r, t, c, 'shape'] = (1, 1, shape_z, shape_y, shape_x)
 
                 # change to um if mm
                 if self.space_unit == "mm" or self.space_unit == "millimeter":
@@ -200,7 +218,7 @@ class nifti_zarr_loader:
                     self.metaData[r, t, c, "resolution"] = self.dataset_scales[r][-3:]
 
                 # Collect dataset info
-                self.metaData[r, t, c, "chunks"] = array.chunks[-3:]
+                self.metaData[r, t, c, "chunks"] = (1, 1, *array.chunks[-3:])
                 dtype = array.dtype
                 if dtype == "int8":
                     dtype = "uint8"
@@ -231,7 +249,7 @@ class nifti_zarr_loader:
                 break
 
         self.change_resolution_lock(self.ResolutionLevelLock)
-        logger.info(self.metaData)
+        # logger.info(self.metaData)
 
     def validate_nifti_file(self, file_path):
         """
@@ -263,13 +281,11 @@ class nifti_zarr_loader:
             nifti_file_location (str): Path to the NIfTI file.
         """
         hash_value = calculate_hash(self.file_ino + self.modification_time)
-        pyramids_images_store = self.settings.get(
-            "nifti_loader", "pyramids_images_store"
-        )
+        pyramids_images_store = self.pyramids_images_store
         pyramids_images_store_dir = (
             pyramids_images_store + hash_value[0:2] + "/" + hash_value[2:4] + "/"
         )
-        suffix = self.settings.get("nifti_loader", "extension_type")
+        suffix = self.extension_type
         pyramid_image_location = pyramids_images_store_dir + hash_value + suffix
         if self.pyramid_dic.get(hash_value) and os.path.exists(pyramid_image_location):
             self.datapath = self.pyramid_dic.get(hash_value)
@@ -293,7 +309,6 @@ class nifti_zarr_loader:
                     pyramids_images_store_dir,
                     pyramid_image_location,
                 )
-        self.datapath = pyramid_image_location
 
     def pyramid_building_process(
         self,
@@ -393,7 +408,14 @@ class nifti_zarr_loader:
             ResolutionLevelLock (int): The resolution level to lock.
         """
         self.ResolutionLevelLock = ResolutionLevelLock
-        self.shape = self.metaData[self.ResolutionLevelLock, 0, 0, "shape"]
+        # self.shape = self.metaData[self.ResolutionLevelLock, 0, 0, "shape"]
+        self.shape = (
+            self.TimePoints,
+            self.Channels,
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-3],
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-2],
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-1]
+        )
         self.ndim = len(self.shape)
         self.chunks = self.metaData[self.ResolutionLevelLock, 0, 0, "chunks"]
         self.resolution = self.metaData[self.ResolutionLevelLock, 0, 0, "resolution"]
@@ -485,13 +507,14 @@ class nifti_zarr_loader:
         incomingSlices = (r, t, c, z, y, x)
         logger.info(incomingSlices)
         if self.cache is not None:
-            key = f"{self.datapath}_getSlice_{str(incomingSlices)}"
+            # key = f"{self.datapath}_getSlice_{str(incomingSlices)}"
             # key = self.datapath + '_getSlice_' + str(incomingSlices)
+            key = f'{self.file_ino + self.modification_time + str(incomingSlices)}'
             result = self.cache.get(key, default=None, retry=True)
             if result is not None:
                 logger.info(f"loader cache found")
                 return result
-        list_tp = [0] * self.ndim
+        list_tp = [0] * len(self.axes)
         if self.dim_pos_dic.get("t") != None:
             list_tp[self.dim_pos_dic.get("t")] = t
         if self.dim_pos_dic.get("c") != None:
@@ -505,8 +528,8 @@ class nifti_zarr_loader:
         tp = tuple(list_tp)
         # logger.success(tp)
         result = self.arrays[r][tp]
-        if len(result.shape) < 4:
-            result = np.expand_dims(result, axis=0)
+        # if len(result.shape) < 4:
+        #     result = np.expand_dims(result, axis=0)
         result = result.astype(self.dtype)
         logger.info(result.shape)
         if self.cache is not None:
@@ -520,7 +543,7 @@ class nifti_zarr_loader:
             # print(f"  Number of shards: {shards_len}")
             # print(f"  Total size limit: {total_size} GB")
             # print(f"  Current size: {current_size} GB\n") 
-            self.cache.set(key, result, expire=None, tag=self.datapath, retry=True)
+            self.cache.set(key, result, expire=None, tag=self.file_ino + self.modification_time, retry=True)
             logger.info(f"loader cache saved")
             # test = True
             # while test:
