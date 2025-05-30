@@ -28,6 +28,9 @@ class terafly_loader:
         self.location = location
         self.cache = cache
         self.squeeze = squeeze
+        self.file_stat = os.stat(location)
+        self.file_ino = str(self.file_stat.st_ino)
+        self.modification_time = str(self.file_stat.st_mtime)
         self.ResolutionLevels = len(file_list)
         self.ResolutionLevelLock = (
             0 if ResolutionLevelLock is None else ResolutionLevelLock
@@ -53,16 +56,18 @@ class terafly_loader:
             for t, c in itertools.product(range(self.TimePoints), range(self.Channels)):
                 # reverse x_y_z to z_y_x
                 reverse_tuple = self.array[r].get_dim()[0:3][::-1]
-                self.metaData[r, t, c, "shape"] = (t + 1, c + 1, *reverse_tuple)
+                self.metaData[r, t, c, "shape"] = (1, 1, *reverse_tuple)
                 self.metaData[r, t, c, "resolution"] = (
                     self.array[r]._volume.VXL_D,
                     self.array[r]._volume.VXL_V,
                     self.array[r]._volume.VXL_H,
                 )
-                self.metaData[r, t, c, "chunks"] = (128, 128, 128)
+                top_left_bulk = self.array[r]._volume.BLOCKS[0][0]
+                d, h, w = int(top_left_bulk.DEPTH/top_left_bulk.N_BLOCKS), top_left_bulk.HEIGHT, top_left_bulk.WIDTH
+                self.metaData[r, t, c, "chunks"] = (1, 1, d, h, w)
                 self.metaData[r, t, c, "dtype"] = self.dtype
-                self.metaData[r, t, c, "ndim"] = len(self.array[r].get_dim()) + 1
-        self.change_resolution_lock(0)
+                self.metaData[r, t, c, "ndim"] = len(self.array[r].get_dim())
+        self.change_resolution_lock(self.ResolutionLevelLock)
         logger.info(self.metaData)
 
     def extract_and_sort_by_multiplication(self, directory):
@@ -120,7 +125,14 @@ class terafly_loader:
             ResolutionLevelLock (int): The resolution level to lock.
         """
         self.ResolutionLevelLock = ResolutionLevelLock
-        self.shape = self.metaData[self.ResolutionLevelLock, 0, 0, "shape"]
+        # self.shape = self.metaData[self.ResolutionLevelLock, 0, 0, "shape"]
+        self.shape = (
+            self.TimePoints,
+            self.Channels,
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-3],
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-2],
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-1]
+        )
         self.ndim = len(self.shape)
         self.chunks = self.metaData[self.ResolutionLevelLock, 0, 0, "chunks"]
         self.resolution = self.metaData[self.ResolutionLevelLock, 0, 0, "resolution"]
@@ -197,9 +209,10 @@ class terafly_loader:
         """
 
         incomingSlices = (r, t, c, z, y, x)
-        key = f"{self.location}_getSlice_{str(incomingSlices)}"
+        # key = f"{self.location}_getSlice_{str(incomingSlices)}"
         if self.cache is not None:
             # key = self.location + '_getSlice_' + str(incomingSlices)
+            key = f'{self.file_ino + self.modification_time + str(incomingSlices)}'
             result = self.cache.get(key, default=None, retry=True)
             if result is not None:
                 logger.info(f"loader cache found")
@@ -241,7 +254,7 @@ class terafly_loader:
             # print(f"  Number of shards: {shards_len}")
             # print(f"  Total size limit: {total_size} GB")
             # print(f"  Current size: {current_size} GB\n") 
-            self.cache.set(key, result, expire=None, tag=self.location, retry=True)
+            self.cache.set(key, result, expire=None, tag=self.file_ino + self.modification_time, retry=True)
             logger.info(f"loader cache saved")
         return result
     
