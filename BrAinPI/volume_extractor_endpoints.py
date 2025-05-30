@@ -32,6 +32,24 @@ from utils import (from_path_to_html,
                    )
 
 def dset_z_chunk_info(dataset, resolution_level, time_point, channel):
+    """
+    Retrieve chunk shape and calculate the number of chunks along the z-axis for the dataset.
+
+    This function extracts the shape and chunk size for the last three dimensions 
+    from the dataset metadata, then calculates the total number of chunks along the z-axis given the chunk size.
+
+    Parameters:
+        dataset: An object representing the dataset. It should support indexing into its
+                 metaData with keys formatted as (resolution_level, time_point, channel, key).
+        resolution_level (int): The resolution level from which to extract metadata.
+        time_point (int): The time point index.
+        channel (int): The channel index.
+
+    Returns:
+        tuple: A tuple containing:
+            - chunks (tuple): The shape of chunks along each spatial axis.
+            - max_chunks (int): The total number of chunks along the z-axis.
+    """
     shape = dataset.metaData[resolution_level, time_point, channel,'shape'][-3:]
     chunks = dataset.metaData[resolution_level, time_point, channel, 'chunks'][-3:]
     # shape = dataset.shape[-3:]
@@ -45,11 +63,23 @@ def dset_z_chunk_info(dataset, resolution_level, time_point, channel):
     return chunks, max_chunks
 
 def yx_downsamp_by_z_chunk(dataset,res,t, c, yx_downsamp,chunk, anti_aliasing=True):
-    '''
+    """
     Take a 3d dataset and downsample in 2d (xy) in z chunks as stored on disk
     Always return a float becasuse the output is intended to be further
     downsampled z.  Called from func: get_Volume_At_Specific_Resolution
-    '''
+
+    Parameters:
+        dataset: The dataset object containing the data and metadata.
+        res (int): The resolution level index.
+        t (int): The time point index.
+        c (int): The channel index.
+        yx_downsamp (tuple): The downsampling factors for the y and x dimensions.
+        chunk (int): The index of the z-chunk to process.
+        anti_aliasing (bool, optional): Whether to apply anti-aliasing during rescaling. Defaults to True.
+
+    Returns:
+        ndarray: The downsampled 2D image slice (or set of slices) from the specified chunk.
+    """
 
     shape = dataset.shape[-3:]
     # chunks = dataset.chunks[-3:]
@@ -92,6 +122,21 @@ def get_Volume_At_Specific_Resolution(
     anti_aliasing can be very time consuming when extracting large resolutions.
 
     Everything is completed in RAM, very high resolutions may cause a crash.
+
+    Parameters:
+        dataset: The dataset object containing the volume data and associated metadata.
+        output_resolution (tuple, optional): The target resolution as a tuple (z, y, x). 
+                                               Defaults to (100, 100, 100).
+        time_point (int, optional): The time point index to extract. Defaults to 0.
+        channel (int, optional): The channel index to extract. Defaults to 0.
+        anti_aliasing (bool, optional): Whether to apply anti-aliasing during rescaling. 
+                                        Defaults to False.
+
+    Returns:
+        ndarray: The volume data resized to the specified output resolution and cast to the dataset's data type.
+
+    Raises:
+        Exception: May raise exceptions if issues occur during reading or rescaling of the volume data.
     """
 
     # Find ResolutionLevel that is closest in size but larger
@@ -153,11 +198,41 @@ def get_Volume_At_Specific_Resolution(
 
 
 def setup_extractor_endpoint(app, config):
+    """
+    Set up the Flask endpoint for volume extraction based on a specified resolution.
 
+    This function defines and registers a Flask route (/get_resolution/) that takes 
+    GET requests to extract a volume from the dataset at a specified resolution. 
+    It reads query parameters (path, time_point, channel, resolution), loads the dataset, 
+    extracts the volume using get_Volume_At_Specific_Resolution, and returns the 
+    resulting image as an OME-TIFF file.
+
+    Parameters:
+        app: A Flask application instance.
+        config: A configuration object with methods including:
+                - loadDataset: To load the dataset given a path.
+                - opendata: A dictionary holding opened dataset objects.
+
+    Returns:
+        The Flask application instance with the new route registered.
+    """
     @app.route('/get_resolution/', methods=['GET'])
     @cross_origin(allow_headers=['Content-Type'])
     def get_resolution():
+        """
+        Flask endpoint to get the volume at a specific resolution.
 
+        Query Parameters:
+            path (str): The file path to the dataset.
+            time_point (int, optional): The time point to extract (default is 0).
+            channel (int, optional): The channel index (default is 0).
+            resolution (str or tuple, optional): The desired output resolution, formatted as 
+                                                 a tuple string like "(100, 100, 100)".
+        
+        Returns:
+            A Flask response containing the OME-TIFF file of the processed volume, 
+            or an error message if the path parameter is missing.
+        """
         print(request.args)
         if 'path' not in request.args:
             return 'A path to a compatible dataset must be specified'
