@@ -13,39 +13,6 @@ from logger_tools import logger
 import itertools
 import numpy as np
 from utils import calculate_hash, get_directory_size, delete_oldest_files
-# def calculate_hash(input_string):
-#     # Calculate the SHA-256 hash of the input string
-#     hash_result = hashlib.sha256(input_string.encode()).hexdigest()
-#     return hash_result
-
-
-# def get_directory_size(directory):
-#     total_size = 0
-#     for dirpath, dirnames, filenames in os.walk(directory):
-#         for f in filenames:
-#             fp = os.path.join(dirpath, f)
-#             total_size += os.path.getsize(fp)
-#     return total_size
-
-
-# def delete_oldest_files(directory, size_limit):
-#     items = sorted(Path(directory).glob("*"), key=os.path.getctime)
-#     total_size = get_directory_size(directory)
-
-#     # Delete oldest items until the total size is within the size limit
-#     for item in items:
-#         if total_size <= size_limit:
-#             break
-#         if item.is_file():
-#             item_size = os.path.getsize(item)
-#             os.remove(item)
-#             total_size -= item_size
-#             logger.success(f"Deleted file {item} of size {item_size} bytes")
-#         elif item.is_dir():
-#             dir_size = get_directory_size(item)
-#             shutil.rmtree(item)
-#             total_size -= dir_size
-#             logger.success(f"Deleted directory {item} of size {dir_size} bytes")
 
 
 class tiff_loader:
@@ -57,7 +24,16 @@ class tiff_loader:
     supports handling large datasets.
     """
     def __init__(
-        self, file_location, pyramid_images_connection, cache, settings, ResolutionLevelLock = None, squeeze = True
+        self,
+        file_location,
+        pyramid_images_connection={}, 
+        pyramids_images_allowed_store_size_gb = 100,
+        pyramids_images_allowed_generation_size_gb = 10,
+        pyramids_images_store = None,
+        extension_type = ".ome.tif",
+        ResolutionLevelLock = None, 
+        squeeze = True,
+        cache=None,
     ) -> None:
         """
         Initialize the tiff_loader object.
@@ -65,30 +41,38 @@ class tiff_loader:
         Args:
             file_location (str): Path to the TIFF file.
             pyramid_images_connection (dict): Mapping of hash values to pyramid images.
+            pyramids_images_allowed_store_size_gb (float): Maximum allowed size for the pyramid images store in GB. Defaults to 100.
+            pyramids_images_allowed_generation_size_gb (float): Maximum allowed size for generating pyramid images in GB. Defaults to 10.
+            pyramids_images_store (str, optional): Path to the directory for storing pyramid images. Defaults to None.
+            extension_type (str, optional): The file extension type for the pyramid images. Defaults to ".ome.tif".
             cache (object, optional): Cache object for storing slices. Defaults to None.
-            settings (configparser.ConfigParser): Configuration settings.
             ResolutionLevelLock (int, optional): Resolution level lock. Defaults to None.
             squeeze (bool, optional): Whether to squeeze singleton dimensions. Defaults to True.
         """
         # logger.info('pyramid_images_connection',pyramid_images_connection)
         self.cache = cache
         self.squeeze = squeeze
-        self.settings = settings
+        # self.settings = settings
         self.datapath = file_location
+        # location is the original file location
         self.location = file_location
         self.metaData = {}
         self.file_stat = os.stat(file_location)
         self.file_ino = str(self.file_stat.st_ino)
         self.modification_time = str(self.file_stat.st_mtime)
         self.file_size = self.file_stat.st_size
-        self.allowed_store_size_gb = float(
-            self.settings.get("tif_loader", "pyramids_images_allowed_store_size_gb")
-        )
+        # self.allowed_store_size_gb = float(
+        #     self.settings.get("tif_loader", "pyramids_images_allowed_store_size_gb")
+        # )
+        self.allowed_store_size_gb = float(pyramids_images_allowed_store_size_gb)
         self.allowed_store_size_byte = self.allowed_store_size_gb * 1024 * 1024 * 1024
-        self.allowed_file_size_gb = float(
-            self.settings.get("tif_loader", "pyramids_images_allowed_generation_size_gb")
-        )
+        # self.allowed_file_size_gb = float(
+        #     self.settings.get("tif_loader", "pyramids_images_allowed_generation_size_gb")
+        # )
+        self.allowed_file_size_gb = float(pyramids_images_allowed_generation_size_gb)
         self.allowed_file_size_byte = self.allowed_file_size_gb * 1024 * 1024 * 1024
+        self.pyramids_images_store = pyramids_images_store
+        self.extension_type = extension_type
         self.ResolutionLevelLock = 0 if ResolutionLevelLock is None else ResolutionLevelLock
         self.image = self.validate_tif_file(self.datapath)
         self.filename, self.filename_extension = self.file_extension_split()
@@ -99,9 +83,6 @@ class tiff_loader:
         self.height = self.tags["ImageLength"].value
         self.width = self.tags["ImageWidth"].value
         # logger.info(self.width,self.height)
-        self.dataType = self.image.pages[0].dtype
-        self.metaData["dataType"] = self.dataType
-        # logger.info(self.dataType)
         self.series = len(self.image.series)
         self.is_pyramidal = self.image.series[0].is_pyramidal
         # logger.info("series", self.series)
@@ -165,12 +146,12 @@ class tiff_loader:
                 shape_z = array.shape[self.axes_pos_dic.get("Z")] if self.axes_pos_dic.get("Z") is not None else 1
                 shape_y = array.shape[self.axes_pos_dic.get("Y")] if self.axes_pos_dic.get("Y") is not None else 1
                 shape_x = array.shape[self.axes_pos_dic.get("X")] if self.axes_pos_dic.get("X") is not None else 1
-                self.metaData[r, t, c, 'shape'] = (t + 1, c + 1, shape_z, shape_y, shape_x)
+                self.metaData[r, t, c, 'shape'] = (1, 1, shape_z, shape_y, shape_x)
                 
                 # Collect resolution and dataset info
                 xy_resolution = array.pages[0].get_resolution()
-                self.metaData[r, t, c, 'resolution'] = (1/xy_resolution[0], 1/xy_resolution[1])
-                self.metaData[r, t, c, 'chunks'] = self.tile_size
+                self.metaData[r, t, c, 'resolution'] = (1, *xy_resolution)
+                self.metaData[r, t, c, 'chunks'] = (1, 1, 1, *self.tile_size)
                 self.metaData[r, t, c, 'dtype'] = array.dtype
                 self.metaData[r, t, c, 'ndim'] = array.ndim
 
@@ -188,7 +169,14 @@ class tiff_loader:
             ResolutionLevelLock (int): The new resolution lock level.
         """
         self.ResolutionLevelLock = ResolutionLevelLock
-        self.shape = self.metaData[self.ResolutionLevelLock,0,0,'shape']
+        # self.shape = self.metaData[self.ResolutionLevelLock,0,0,'shape']
+        self.shape = (
+            self.TimePoints,
+            self.Channels,
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-3],
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-2],
+            self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-1]
+        )
         self.ndim = len(self.shape)
         self.chunks = self.metaData[self.ResolutionLevelLock,0,0,'chunks']
         self.resolution = self.metaData[self.ResolutionLevelLock,0,0,'resolution']
@@ -269,7 +257,7 @@ class tiff_loader:
         incomingSlices = (r, t, c, z, y, x)
         logger.info(incomingSlices)
         if self.cache is not None:
-            key = f"{self.file_ino + self.modification_time}-{r}-{t}-{c}-{z}-{y}-{x}"
+            key = f"{self.file_ino + self.modification_time + str(incomingSlices)}"
             result = self.cache.get(key, default=None, retry=True)
             if result is not None:
                 logger.info(f"loader cache found: {incomingSlices}")
@@ -297,10 +285,8 @@ class tiff_loader:
         if self.axes_pos_dic.get("Z") != None:
             list_tp[self.axes_pos_dic.get("Z")] = z
         if self.axes_pos_dic.get("Y") != None:
-            y = y
             list_tp[self.axes_pos_dic.get("Y")] = y
         if self.axes_pos_dic.get("X") != None:
-            x = x
             list_tp[self.axes_pos_dic.get("X")] = x
         logger.info(f'{list_tp},{self.type}')
         zarr_array = None
@@ -340,70 +326,6 @@ class tiff_loader:
             logger.info(f"loader cache saved")
         return result
 
-    # def __getitem__(self, key):
-    #     list_tp = None
-    #     if self.type.endswith("S"):
-    #         list_tp = [0] * (len(self.type) - 1)
-    #     else:
-    #         list_tp = [0] * len(self.type)
-    #     r = int(key[0])
-
-    #     if (
-    #         self.axes_pos_dic.get("T") != None
-    #         or self.axes_pos_dic.get("Q") != None
-    #         or self.axes_pos_dic.get("I") != None
-    #     ):
-    #         t = int(key[1])
-    #         if self.axes_pos_dic.get("T") != None:
-    #             list_tp[self.axes_pos_dic.get("T")] = t
-    #         elif self.axes_pos_dic.get("Q") != None:
-    #             list_tp[self.axes_pos_dic.get("Q")] = t
-    #         elif self.axes_pos_dic.get("I") != None:
-    #             list_tp[self.axes_pos_dic.get("I")] = t
-    #     if self.axes_pos_dic.get("C") != None:
-    #         c = int(key[2])
-    #         list_tp[self.axes_pos_dic.get("C")] = c
-    #     if self.axes_pos_dic.get("Z") != None:
-    #         z = int(key[3])
-    #         list_tp[self.axes_pos_dic.get("Z")] = z
-    #     if self.axes_pos_dic.get("Y") != None:
-    #         tile_size_height = int(self.tile_size[0])
-    #         y = int(key[4])
-    #         list_tp[self.axes_pos_dic.get("Y")] = slice(
-    #             y * tile_size_height, (y + 1) * tile_size_height
-    #         )
-    #     if self.axes_pos_dic.get("X") != None:
-    #         tile_size_width = int(self.tile_size[1])
-    #         x = int(key[5])
-    #         list_tp[self.axes_pos_dic.get("X")] = slice(
-    #             x * tile_size_width, (x + 1) * tile_size_width
-    #         )
-    #     # logger.info("tp",tp)
-    #     zarr_array = None
-    #     if self.is_pyramidal:
-    #         zarr_array = self.image.aszarr(series=0, level=r)
-    #     else:
-    #         zarr_array = self.image.aszarr(series=r, level=0)
-    #     zarr_store = zarr.open(zarr_array)
-    #     tp = tuple(list_tp)
-    #     result = zarr_store[tp]
-
-    #     # Here for python > 3.11, to use the unpack operator *
-    #     # result = zarr_store[
-    #     #     *(tp),
-    #     #     y * tile_size_heiht : (y + 1) * tile_size_heiht,
-    #     #     x * tile_size_width : (x + 1) * tile_size_width,
-    #     # ]
-
-    #     # numpy_array = np.random.randint(0, 255, size=(256, 256, 3), dtype=np.uint8)
-    #     # return numpy_array
-
-    #     cache_key = f"{self.file_ino + self.modification_time}-{key[0]}-{key[1]}-{key[2]}-{key[3]}-{key[4]}-{key[5]}"
-    #     if self.cache is not None:
-    #         self.cache.set(
-    #             cache_key, result, expire=None, tag=self.datapath, retry=True
-    #         )
-    #     return result
 
     def validate_tif_file(self,file_path):
         """
@@ -534,11 +456,11 @@ class tiff_loader:
             tif (tifffile.TiffFile): The TIFF file object.
         """
         hash_value = calculate_hash(self.file_ino + self.modification_time)
-        pyramids_images_store = self.settings.get("tif_loader", "pyramids_images_store")
+        pyramids_images_store = self.pyramids_images_store
         pyramids_images_store_dir = (
             pyramids_images_store + hash_value[0:2] + "/" + hash_value[2:4] + "/"
         )
-        suffix = self.settings.get("tif_loader", "extension_type")
+        suffix = self.extension_type
         pyramid_image_location = pyramids_images_store_dir + hash_value + suffix
         if self.pyramid_dic.get(hash_value) and os.path.exists(pyramid_image_location):
             self.datapath = self.pyramid_dic.get(hash_value)
@@ -785,89 +707,10 @@ class tiff_loader:
         Returns:
             dict: Mapping of axis labels to their sizes.
         """
-        dic = {"T": 1, "C": 1, "Z": 1, "Q": 1, "I": 1}
+        dic = {"T": 1, "C": 1, "Z": 1, "Q": 1, "I": 1, "Y": 1, "X": 1, "S": 1}
         characters = list(axes)
         # logger.info("Axis characters:", characters)
         for index, char in enumerate(characters):
             if char in dic:
                 dic[char] = shape[index]
         return dic
-
-
-# class tif_file_precheck:
-#     def __init__(self, file_location) -> None:
-#         self.location = file_location
-#         self.image = tifffile.TiffFile(file_location)
-#         self.file_stat = os.stat(file_location)
-#         self.size = self.file_stat.st_size
-#         self.metaData = {}
-#         self.dataType = str(self.image.pages[0].dtype)
-#         self.metaData["dataType"] = self.dataType
-#         if self.image.pages[0].is_tiled:
-#             # Get the tile size
-#             self.tile_size = (
-#                 self.image.pages[0].tilelength,
-#                 self.image.pages[0].tilewidth,
-#             )
-#         else:
-#             logger.info("Assigning tile size (128, 128)")
-#             self.tile_size = (128, 128)
-#         self.type = self.image.series[0].axes
-#         self.is_pyramidal = self.image.series[0].is_pyramidal
-#         self.axes_pos_dic = self.axes_char_extract(self.type)
-#         self.inspectors_result = self.pyramid_inspectors(self.image)
-#         self.metaData["inspectors_result"] = self.inspectors_result
-#         for i_s, s in enumerate(self.image.series):
-#             logger.info(f"Series {i_s}: {s}")
-#             for i_l, level in enumerate(s.levels):
-#                 logger.info(f"Level {i_l}: {level}")
-#                 self.metaData[f"Series:{i_s}, Level:{i_l}"] = str(level)
-#         del self.image
-#         gc.collect()
-
-#     def pyramid_inspectors(self, tif):
-#         if self.is_pyramidal:
-#             # may need more check opeation
-#             return True
-#         else:
-#             for r in range(len(tif.series)):
-#                 if r != 0:
-#                     x_value_cur = tif.series[r].shape[self.axes_pos_dic.get("X")]
-#                     x_value_pre = tif.series[r - 1].shape[self.axes_pos_dic.get("X")]
-#                     y_value_cur = tif.series[r].shape[self.axes_pos_dic.get("Y")]
-#                     y_value_pre = tif.series[r - 1].shape[self.axes_pos_dic.get("Y")]
-#                     if (
-#                         x_value_cur != x_value_pre // 2
-#                         or y_value_cur != y_value_pre // 2
-#                     ) and (
-#                         x_value_cur != math.ceil(x_value_pre / 2)
-#                         or y_value_cur != math.ceil(y_value_pre / 2)
-#                     ):
-#                         return False
-#                 if r == len(tif.series) - 1:
-#                     if (
-#                         tif.series[r].pages[0].imagelength > self.tile_size[0]
-#                         or tif.series[r].pages[0].imagewidth > self.tile_size[1]
-#                     ):
-#                         return False
-#                     else:
-#                         return True
-#             return True
-
-#     def axes_char_extract(self, axes):
-#         dic = {
-#             "T": None,
-#             "C": None,
-#             "Z": None,
-#             "Q": None,
-#             "I": None,
-#             "Y": None,
-#             "X": None,
-#             "S": None,
-#         }
-#         characters = list(axes)
-#         # logger.info("Axis characters:", characters)
-#         for index, char in enumerate(characters):
-#             if char in dic:
-#                 dic[char] = index
-#         return dic
