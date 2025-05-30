@@ -10,7 +10,7 @@ from flask import (
 from PIL import Image
 import io
 from flask_cors import cross_origin
-
+import numpy as np
 import hashlib
 from logger_tools import logger
 import cv2
@@ -27,18 +27,18 @@ def openseadragon_dtypes():
     return [".tif", ".tiff", ".ome.tif", ".ome.tiff", ".ome-tif", ".ome-tiff", ".jp2"]
 
 
-def calculate_hash(input_string):
-    """
-    Calculates the SHA-256 hash of the input string.
+# def calculate_hash(input_string):
+#     """
+#     Calculates the SHA-256 hash of the input string.
 
-    Args:
-        input_string (str): The input string to hash.
+#     Args:
+#         input_string (str): The input string to hash.
 
-    Returns:
-        str: The SHA-256 hash of the input string.
-    """
-    hash_result = hashlib.sha256(input_string.encode()).hexdigest()
-    return hash_result
+#     Returns:
+#         str: The SHA-256 hash of the input string.
+#     """
+#     hash_result = hashlib.sha256(input_string.encode()).hexdigest()
+#     return hash_result
 
 
 openSeadragonPath = "/osd/"
@@ -119,14 +119,15 @@ def setup_openseadragon(app, config):
                     "openseadragon_temp.html",
                     height=int(img_obj.metadata.get('shape')[-2]),
                     width=int(img_obj.metadata.get('shape')[-1]),
-                    tileSize=int(img_obj.metadata.get('chunks')[0]),
-                    # tileWidth= int(img_obj.tile_size[1]),  
-                    # tileHeight= int(img_obj.tile_size[0]), 
+                    # tileSize=img_obj.metadata.get('chunks')[-2:],
+                    tileHeight= int(img_obj.tile_size[-2]), 
+                    tileWidth= int(img_obj.tile_size[-1]),  
                     host=config.settings.get("app", "url"),
                     parent_url="/".join(path_split),
                     t_point=img_obj.metadata.get('TimePoints'),
                     channel=img_obj.metadata.get('Channels'),
                     z_stack=img_obj.metadata.get('shape')[-3],
+                    resolutionlevels=img_obj.metadata.get('ResolutionLevels') - 1,
                 )
             except Exception as e:
                 logger.error(f'{datapath}: {e}')
@@ -178,6 +179,7 @@ def setup_openseadragon(app, config):
                                 slice(x[0],x[1]),
                                 ]
                 logger.info(chunk.shape)
+                chunk = np.squeeze(chunk)
                 if len(chunk.shape) == 3 and chunk.shape[2] == 3:  # Color image
                     chunk = cv2.cvtColor(chunk, cv2.COLOR_RGB2BGR)
 

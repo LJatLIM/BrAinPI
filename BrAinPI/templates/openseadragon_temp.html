@@ -119,7 +119,8 @@
 
   <script>
     var viewer;
-    const maxLevel = Math.ceil(Math.log2(Math.max('{{ width }}',' {{ height }}') / '{{  tileSize }}'));
+    // const maxLevel = Math.ceil(Math.log2(Math.max('{{ width }}',' {{ height }}') / '{{tileHeight}}'));
+    const maxLevel = parseInt('{{resolutionlevels}}');
     function initializeViewer(t_point, channel, z_stack) {
       viewer = OpenSeadragon({
         id: "viewer",
@@ -138,9 +139,9 @@
       return {
         height: parseInt('{{ height }}'),
         width: parseInt('{{ width }}'),
-        tileSize: parseInt('{{ tileSize }}'),
-        // tileWidth: parseInt('{{tileWidth}}'),  // Use tileWidth from the tuple
-        // tileHeight: parseInt('{{tileHeight}}'), // Use tileHeight from the tuple
+        // tileSize: '{{ tileSize }}',
+        tileWidth: parseInt('{{tileWidth}}'),  // Use tileWidth from the tuple
+        tileHeight: parseInt('{{tileHeight}}'), // Use tileHeight from the tuple
         minLevel: 0,
         maxLevel: maxLevel,
         getTileUrl: function (level, x, y) {
@@ -150,7 +151,7 @@
           //   reversedLevel + "/" + t_point + "/" + channel + "/" + z_stack + "/" + y + "/" + x + "/" + "r" +
           //   reversedLevel + "-t" + t_point + "-c" + channel + "-z" + z_stack + "-y" + y + "-x" + x + ".png";
           return "{{host}}/{{parent_url}}/" +
-        reversedLevel + "/" + t_point + "/" + channel + "/" + z_stack  + "_" + (y * parseInt('{{ tileSize }}')) + "-" + ((y+1) * parseInt('{{ tileSize }}')) + "_" + (x * parseInt('{{ tileSize }}')) +"-"+ ((x+1) * parseInt('{{ tileSize }}'));
+        reversedLevel + "/" + t_point + "/" + channel + "/" + z_stack  + "_" + (y * parseInt('{{ tileHeight }}')) + "-" + ((y+1) * parseInt('{{ tileHeight }}')) + "_" + (x * parseInt('{{ tileWidth }}')) +"-"+ ((x+1) * parseInt('{{ tileWidth }}'));
         }
       };
     }
