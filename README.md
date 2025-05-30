@@ -14,6 +14,9 @@ conda activate brainpi
 
 git clone https://github.com/CBI-PITT/BrAinPI.git
 pip install -e /path/to/cloned/repo/
+# Using conda to install glymur for jp2 images
+conda install -c conda-forge glymur=0.13.6
+
 ## Before running BrAinPI
 
 '''
