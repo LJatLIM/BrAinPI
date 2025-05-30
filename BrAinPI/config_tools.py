@@ -106,6 +106,7 @@ class config:
             cache (diskcache.FanoutCache): A persistent cache object for managing dataset resources efficiently.
         """
         self.opendata = {}
+        self.opendata_set = set()
         self.settings = get_config('settings.ini')
         self.pyramid_images_connection = get_pyramid_images_connection(self.settings)
         from cache_tools import get_cache
@@ -118,23 +119,24 @@ class config:
     def loadDataset(self, key: str, dataPath: str ):
         """
         Given the filesystem path to a file, open that file with the appropriate
-        reader and store it in the opendata attribute with the self/hash of dataPath
+        reader and store it in the opendata attribute with the hash of dataPath
         as the key
 
         If the key exists return
-        Always return the self/hash of the dataPath
+        Always return the hash of the dataPath
 
         Args:
-            key (str): self/hash of dataPath
+            key (str): hash of dataPath
             dataPath (str): dataPath
 
         Returns:
-            key (str): self/hash of dataPath
+            key (str): hash of dataPath
         """
         # print(dataPath , file_ino , modification_time)
         from logger_tools import logger
         if key in self.opendata:
-            logger.info(f'DATAPATH ENTRIES__{tuple(self.opendata.keys())}')
+            # logger.info(f'DATAPATH ENTRIES__{tuple(self.opendata.keys())}')
+            logger.info(f'DATAPATH ENTRIES__{self.opendata_set}')
             return key
         if os.path.splitext(dataPath)[-1] == '.ims':
 
@@ -144,39 +146,96 @@ class config:
             if self.opendata[key].hf is None or self.opendata[key].dataset is None:
                 logger.info('opening ims object')
                 self.opendata[key].open()
+            self.opendata_set.add(dataPath)
                 
         elif dataPath.endswith('.ome.zarr'):
             from ome_zarr_loader import ome_zarr_loader
-            self.opendata[key] = ome_zarr_loader(dataPath, squeeze=False, zarr_store_type=NestedDirectoryStore, cache=self.cache)
+            self.opendata[key] = ome_zarr_loader(
+                dataPath, 
+                squeeze=False, 
+                zarr_store_type=NestedDirectoryStore, 
+                cache=self.cache
+                )
             # self.opendata[dataPath].isomezarr = True
+            self.opendata_set.add(dataPath)
 
         elif '.omezans' in os.path.split(dataPath)[-1]:
             from ome_zarr_loader import ome_zarr_loader
-            self.opendata[key] = ome_zarr_loader(dataPath, squeeze=False, zarr_store_type=Archived_Nested_Store, cache=self.cache)
-
+            self.opendata[key] = ome_zarr_loader(
+                dataPath, 
+                squeeze=False, 
+                zarr_store_type=Archived_Nested_Store, 
+                cache=self.cache
+                )
+            self.opendata_set.add(dataPath)
         elif '.omehans' in os.path.split(dataPath)[-1]:
             from ome_zarr_loader import ome_zarr_loader
-            self.opendata[key] = ome_zarr_loader(dataPath, squeeze=False, zarr_store_type=H5_Nested_Store, cache=self.cache)
-
+            self.opendata[key] = ome_zarr_loader(
+                dataPath, 
+                squeeze=False, 
+                zarr_store_type=H5_Nested_Store, 
+                cache=self.cache
+                )
+            self.opendata_set.add(dataPath)
         elif 's3://' in dataPath and dataPath.endswith('.zarr'):
             # import s3fs
             # self.opendata[dataPath] = ome_zarr_loader(dataPath, squeeze=False, zarr_store_type=s3fs.S3Map,
             #                                           cache=self.cache)
             from s3_utils import s3_boto_store
-            self.opendata[key] = ome_zarr_loader(dataPath, squeeze=False, zarr_store_type=s3_boto_store,
-                                                    cache=self.cache)
+            self.opendata[key] = ome_zarr_loader(
+                dataPath, 
+                squeeze=False, 
+                zarr_store_type=s3_boto_store,
+                cache=self.cache
+                )
+            self.opendata_set.add(dataPath)
         elif dataPath.lower().endswith('tif') or dataPath.lower().endswith('tiff'):
             import tiff_loader
-            self.opendata[key] = tiff_loader.tiff_loader(dataPath, self.pyramid_images_connection, self.cache,self.settings)
+            self.opendata[key] = tiff_loader.tiff_loader(
+                dataPath,
+                self.pyramid_images_connection, 
+                self.settings.get("tif_loader", "pyramids_images_allowed_store_size_gb"),
+                self.settings.get("tif_loader", "pyramids_images_allowed_generation_size_gb"),
+                self.settings.get("tif_loader", "pyramids_images_store"),
+                self.settings.get("tif_loader", "extension_type"),
+                squeeze=False,
+                cache=self.cache,
+                )
+            self.opendata_set.add(dataPath)
         elif dataPath.lower().endswith('.terafly'):
             import terafly_loader
-            self.opendata[key] = terafly_loader.terafly_loader(dataPath, squeeze=False,cache=self.cache)
+            self.opendata[key] = terafly_loader.terafly_loader(
+                dataPath, 
+                squeeze=False,
+                cache=self.cache
+                )
+            self.opendata_set.add(dataPath)
         elif dataPath.lower().endswith('.nii.zarr') or dataPath.lower().endswith('.nii.gz') or dataPath.lower().endswith('.nii'):
             import nifti_loader
-            self.opendata[key] = nifti_loader.nifti_zarr_loader(dataPath, self.pyramid_images_connection,self.settings,squeeze=False,cache=self.cache)
+            self.opendata[key] = nifti_loader.nifti_zarr_loader(
+                dataPath, 
+                self.pyramid_images_connection,
+                self.settings.get("nifti_loader", "pyramids_images_allowed_store_size_gb"),
+                self.settings.get("nifti_loader", "pyramids_images_allowed_generation_size_gb"),
+                self.settings.get("nifti_loader", "pyramids_images_store"),
+                self.settings.get("nifti_loader", "extension_type"),
+                zarr_store_type=NestedDirectoryStore,
+                squeeze=False,
+                cache=self.cache)
+            self.opendata_set.add(dataPath)
         elif dataPath.lower().endswith('.jp2'):
             import jp2_loader
-            self.opendata[key] = jp2_loader.jp2_loader(dataPath, self.pyramid_images_connection,self.settings,squeeze=False,cache=self.cache)
+            self.opendata[key] = jp2_loader.jp2_loader(
+                dataPath,
+                self.pyramid_images_connection,
+                self.settings.get("jp2_loader", "pyramids_images_allowed_store_size_gb"),
+                self.settings.get("jp2_loader", "pyramids_images_allowed_generation_size_gb"),
+                self.settings.get("jp2_loader", "pyramids_images_store"),
+                self.settings.get("jp2_loader", "extension_type"),
+                squeeze=False,
+                cache=self.cache
+                )
+            self.opendata_set.add(dataPath)
         ## Append extracted metadata as attribute to open dataset
         try:
             from utils import metaDataExtraction # Here to get around curcular import at BrAinPI init
