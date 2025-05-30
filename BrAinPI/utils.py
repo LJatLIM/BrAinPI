@@ -6,6 +6,7 @@ Created on Thu Nov  4 10:05:34 2021
 """
 
 
+import cProfile
 import numpy as np
 import io
 import os
@@ -17,6 +18,8 @@ import requests
 from skimage import img_as_float32, img_as_float64, img_as_uint, img_as_ubyte
 import difflib
 import datetime
+
+import zarr
 from logger_tools import logger
 # import logging
 # from watchdog.events import FileSystemEventHandler
