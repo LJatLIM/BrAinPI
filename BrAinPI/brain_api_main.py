@@ -102,7 +102,7 @@ print('Initiating Coordination endpoints')
 from coordination_endpoints import inititate
 app = inititate(app, config)
 
-print('Initiating Coordination endpoints')
+print('Initiating Volume Extractor endpoints')
 from volume_extractor_endpoints import setup_extractor_endpoint
 app = setup_extractor_endpoint(app, config)
 
