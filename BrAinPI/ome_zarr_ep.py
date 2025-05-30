@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Created on Mon May 16 22:48:44 2022
-
 @author: awatson
 """
 
@@ -45,9 +44,22 @@ import utils
 
 
 def where_is_that_chunk(chunk_name='0.0.1.3.14', dataset_shape=(1,1,2,23857,14623), chunk_size=(1,1,1,1000,1000)):
-    '''
-    Given a chunk file name, what is the pixel coordinates for that chunk in a larger datasets
-    '''
+    """
+    Compute the pixel coordinate ranges for a given chunk in a larger dataset.
+
+    The chunk name is assumed to be in the format 't.c.z.y.x', and each component
+    is multiplied by the corresponding dimension of chunk_size to determine start and stop indices.
+
+    Parameters:
+        chunk_name (str): A dot-separated string indicating the chunk indices for each dimension.
+        dataset_shape (tuple): The shape of the full dataset as (t, c, z, y, x).
+        chunk_size (tuple): The size of each chunk as (t, c, z, y, x).
+
+    Returns:
+        dict: A dictionary with keys 'tStart', 'tStop', 'cStart', 'cStop', 'zStart', 'zStop', 'yStart', 'yStop', 'xStart', 'xStop'
+              representing the start and stop coordinates for each respective dimension. If the stop index exceeds
+              the dataset dimension, the corresponding value is set to None.
+    """
     t,c,z,y,x = (int(x) for x in chunk_name.split('.'))
     
     location = {}
@@ -76,7 +88,18 @@ def where_is_that_chunk(chunk_name='0.0.1.3.14', dataset_shape=(1,1,2,23857,1462
 
 
 def get_chunk(locationDict,res,dataset, chunk_size):
+    """
+    Extract a chunk of data from the dataset using the coordinate ranges provided.
 
+    Parameters:
+        locationDict (dict): A dictionary containing coordinate ranges for each dimension.
+        res (int): The resolution level at which to retrieve the data.
+        dataset (numpy.ndarray or similar): The source dataset from which to extract the chunk.
+        chunk_size (tuple): The size of the chunk in each dimension.
+
+    Returns:
+        numpy.ndarray: The extracted chunk of data.
+    """
     return dataset[
         res,
         slice(locationDict['tStart'],locationDict['tStop']),
@@ -88,6 +111,20 @@ def get_chunk(locationDict,res,dataset, chunk_size):
 
 
 def pad_chunk(chunk, chunk_size):
+    """
+    Pad a chunk of data with zeros if it does not match the specified chunk size.
+
+    This function creates a new numpy array with the given chunk_size, fills it with zeros,
+    and then copies the content of the original chunk into the top-left (or equivalent) corner
+    of the new array.
+
+    Parameters:
+        chunk (numpy.ndarray): The data chunk to pad.
+        chunk_size (tuple): The desired shape for the padded chunk.
+
+    Returns:
+        numpy.ndarray: The padded chunk, guaranteed to have the shape specified by chunk_size.
+    """
     if chunk.shape == chunk_size:
         return chunk
     
@@ -104,6 +141,13 @@ def pad_chunk(chunk, chunk_size):
 
 
 def get_compressor():
+    """
+    Create and return a compressor instance for encoding data.
+
+    Returns:
+        numcodecs.Blosc: A configured Blosc compressor using zstd codec with clevel=5,
+                          enabled shuffle, and blocksize set to 0.
+    """
     # return Blosc(cname='lz4',clevel=3)
     # return Blosc(cname='lz4', clevel=3, shuffle=Blosc.SHUFFLE, blocksize=0)
     return Blosc(cname='zstd', clevel=5, shuffle=Blosc.SHUFFLE, blocksize=0)
@@ -128,6 +172,19 @@ def get_compressor():
 #     return compressed
 
 def compress_zarr_chunk(np_array,compressor=get_compressor()):
+    """
+    Compress a numpy array chunk into a BytesIO buffer using the specified compressor.
+
+    The function converts the numpy array into a bytes stream and then applies the compressor.
+    The output is a BytesIO object that can be returned as a file-like response in a web framework.
+
+    Parameters:
+        np_array (numpy.ndarray): The data chunk to compress.
+        compressor (object): Compressor object (default is provided by get_compressor).
+
+    Returns:
+        io.BytesIO: A BytesIO object containing the compressed data.
+    """
     # buf = np.asarray(np_array).astype(np_array.dtype, casting="safe")
     buf = np_array.tobytes('C')
     if compressor is not None:
@@ -139,19 +196,40 @@ def compress_zarr_chunk(np_array,compressor=get_compressor()):
     return img_ram
 
 def chunks_combine_channels(metadata,resolution_level):
-    '''
+    """
     Assumes 5 dimensions and replaces channel dim (t,c,z,y,x) with the number of channels.
     This is good for neuroglancer compatibility because it enables all channels to be delivered with each chunk
     enabling a shader to mix all channels into RGB representation
 
-    return new chunk_size tuple
-    '''
+    Parameters:
+        metadata (dict): Metadata dictionary extracted from the dataset.
+        resolution_level (int): The resolution level for which the chunk metadata is extracted.
+
+    Returns:
+        tuple: The new chunk size tuple with channels combined.
+    """
+
     chunks = list(metadata[(resolution_level, 0, 0, 'chunks')])
     chunks[1] = metadata['Channels']
     return tuple(chunks)
 
 def get_zarray_file(numpy_like_dataset,resolution_level,combine_channels=False,force8Bit=False):
+    """
+    Generate the zarray metadata for an OME-Zarr dataset.
 
+    This function creates a metadata dictionary with the appropriate chunk sizes,
+    data type encoding, and compressor settings for a given resolution level.
+    It allows options for combining channels (for Neuroglancer compatibility) and forcing 8-bit data.
+
+    Parameters:
+        numpy_like_dataset: The dataset (as a numpy-like array) from which metadata is extracted.
+        resolution_level (int): The resolution level to use when generating metadata.
+        combine_channels (bool): If True, combines channels into each chunk. Default is False.
+        force8Bit (bool): If True, forces the data type to 8-bit. Default is False.
+
+    Returns:
+        dict: A dictionary representing the zarray metadata.
+    """
     metadata = utils.metaDataExtraction(numpy_like_dataset,strKey=False)
 
     zarray = {}
@@ -256,6 +334,20 @@ max_values = {
 #         return img_as_float64(array)
 
 def conv_dtype_value(value,fdtype,tdtype):
+    """
+    Convert a scalar value from one data type range to another based on maximum allowed values.
+
+    This is typically used to adjust intensity window values when converting image data from a higher bit depth
+    to 8-bit.
+
+    Parameters:
+        value (numeric): The value to convert.
+        fdtype: The original data type of the value.
+        tdtype: The target data type to which the value should be converted.
+
+    Returns:
+        int: The converted value rounded to the nearest integer.
+    """
     ratio = max_values[tdtype]/max_values[fdtype]
     return round(ratio * value)
 
@@ -264,7 +356,19 @@ def conv_dtype_value(value,fdtype,tdtype):
 #####################################
 
 def get_zattr_file(numpy_like_dataset,force8Bit=False):
+    """
+    Generate the zattr (attributes) metadata file for an OME-Zarr dataset.
 
+    The metadata includes creator information, multiscale configurations,
+    and OMERO metadata for channel windowing and display settings.
+
+    Parameters:
+        numpy_like_dataset: The dataset (as a numpy-like array) from which metadata is extracted.
+        force8Bit (bool): If True, forces window adjustments for 8-bit data. Default is False.
+
+    Returns:
+        dict: A dictionary representing the zattr metadata.
+    """
     metadata = utils.metaDataExtraction(numpy_like_dataset,strKey=False)
     # metadata = metaDataExtraction(numpy_like_dataset,strKey=False)
 
@@ -426,7 +530,19 @@ def get_zattr_file(numpy_like_dataset,force8Bit=False):
 
 
 def open_omezarr_dataset(config,datapath):
+    """
+    Open an OME-Zarr dataset using the provided configuration.
 
+    This function calls a loader on the configuration object to load the dataset.
+    It may also perform additional setup for Neuroglancer functionality if needed.
+
+    Parameters:
+        config: A configuration object that contains methods to load the dataset.
+        datapath (str): The file system path to the dataset.
+
+    Returns:
+        The loaded dataset (the exact type depends on the configuration's implementation).
+    """
     datapath = config.loadDataset(datapath,datapath)
 
     # if not hasattr(config.opendata[datapath],'ng_json'):
@@ -456,7 +572,23 @@ exts = ['.ng.ome.zarr','.ome.zarr','.omezarr','.ome.ngff','.ngff']
 
 
 def setup_omezarr(app, config):
+    """
+    Setup the Flask routes to serve OME-Zarr datasets.
 
+    This function defines and registers a Flask route that inspects the requested URL path,
+    processes any special extensions (such as chunk size definitions or Neuroglancer flags),
+    and then returns the appropriate data (a chunk, .zarray, .zattrs, or .zgroup file)
+    as a response.
+
+    The inner function `omezarr_entry` is decorated with CORS support and registered as a route.
+
+    Parameters:
+        app: The Flask application instance.
+        config: A configuration object that provides dataset loading, caching, and metadata.
+
+    Returns:
+        The Flask application instance with the OME-Zarr route configured.
+    """
     chunks_size_pattern = '^.*[0-9]+x[0-9]+x[0-9]+.*$'  # desired chunk size designated as .##x##x##. where ## are int
     # designated as axes (z,y,x)
 
@@ -466,7 +598,18 @@ def setup_omezarr(app, config):
     Match_class = re.Match
 
     def omezarr_entry(req_path):
+        """
+        Inner route function to handle requests for OME-Zarr resources.
 
+        Determines if the request is for a chunk, .zarray, .zattrs, or .zgroup, then processes and
+        returns the appropriate response.
+
+        Parameters:
+            req_path (str): The remaining path requested after the base route.
+
+        Returns:
+            A Flask Response object containing the data or JSON metadata.
+        """
         path_split, datapath = get_html_split_and_associated_file_path(config,request)
 
         # logger.info(path_split)
