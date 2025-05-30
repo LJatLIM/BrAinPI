@@ -470,11 +470,52 @@ def open_ng_dataset(config, datapath):
     Returns:
         str: The dataset path.
     """
-    datapath = config.loadDataset(datapath, datapath)
+    # datapath = config.loadDataset(datapath, datapath)
+
+    # logger.info("IN OPEN NG DATASET 411")
+
+    # if not hasattr(config.opendata[datapath], "ng_json"):
+    #     logger.info("IN NO ATTR DATASET 414")
+    #     # or not hasattr(config.opendata[datapath],'ng_files'):
+
+    #     ## Forms a comrehensive file list for all chunks
+    #     ## Not necessary for neuroglancer to function and take a long time
+    #     # config.opendata[datapath].ng_files = \
+    #     #     neuroGlancer.ng_files(config.opendata[datapath])
+
+    #     ## Temp ignoring of ng_files
+    #     ## Add attribute so this constantly repeated
+    #     # config.opendata[datapath].ng_files = True
+
+    #     settings = config_tools.get_config("settings.ini")
+    #     chunk_type = settings.get("neuroglancer", "chunk_type")
+
+    #     if chunk_type.lower() == "isotropic":
+    #         chunk_depth = settings.getint("neuroglancer", "chunk_depth")
+    #         config.opendata[datapath].ng_json = ng_json(
+    #             config.opendata[datapath],
+    #             file="dict",
+    #             different_chunks=(chunk_depth, chunk_depth, chunk_depth),
+    #         )
+    #     elif chunk_type.lower() == "anisotropic":
+    #         chunk_depth = settings.getint("neuroglancer", "chunk_depth")
+    #         config.opendata[datapath].ng_json = ng_json(
+    #             config.opendata[datapath], file="dict", different_chunks=chunk_depth
+    #         )
+    #     else:
+    #         config.opendata[datapath].ng_json = ng_json(
+    #             config.opendata[datapath], file="dict"
+    #         )
+
+    # return datapath
+    stat = os.stat(datapath)
+    file_ino = str(stat.st_ino)
+    modification_time = str(stat.st_mtime)
+    datapath_key = config.loadDataset(file_ino + modification_time, datapath)
 
     logger.info("IN OPEN NG DATASET 411")
 
-    if not hasattr(config.opendata[datapath], "ng_json"):
+    if not hasattr(config.opendata[datapath_key], "ng_json"):
         logger.info("IN NO ATTR DATASET 414")
         # or not hasattr(config.opendata[datapath],'ng_files'):
 
@@ -492,22 +533,23 @@ def open_ng_dataset(config, datapath):
 
         if chunk_type.lower() == "isotropic":
             chunk_depth = settings.getint("neuroglancer", "chunk_depth")
-            config.opendata[datapath].ng_json = ng_json(
-                config.opendata[datapath],
+            config.opendata[datapath_key].ng_json = ng_json(
+                config.opendata[datapath_key],
                 file="dict",
                 different_chunks=(chunk_depth, chunk_depth, chunk_depth),
             )
         elif chunk_type.lower() == "anisotropic":
             chunk_depth = settings.getint("neuroglancer", "chunk_depth")
-            config.opendata[datapath].ng_json = ng_json(
-                config.opendata[datapath], file="dict", different_chunks=chunk_depth
+            config.opendata[datapath_key].ng_json = ng_json(
+                config.opendata[datapath_key], file="dict", different_chunks=chunk_depth
             )
         else:
-            config.opendata[datapath].ng_json = ng_json(
-                config.opendata[datapath], file="dict"
+            config.opendata[datapath_key].ng_json = ng_json(
+                config.opendata[datapath_key], file="dict"
             )
 
-    return datapath
+    return datapath_key
+
 
 
 #######################################################################################
@@ -596,11 +638,11 @@ def setup_neuroglancer(app, config):
                 path_split = tuple(part for part in path_split if part != "ng_view")
                 datapath = datapath.replace("/ng_view", "")
                 request.path = request.path.replace("/ng_view", "")
-                datapath = open_ng_dataset(
+                datapath_key = open_ng_dataset(
                     config, datapath
                 )  # Ensures that dataset is open AND info_json is formed
                 link_to_ng = make_ng_link(
-                    config.opendata[datapath], request.path, config=config
+                    config.opendata[datapath_key], request.path, config=config
                 )
                 # redirect.html URLs are not necessary, but they facilitate the inclusion of gtag for google analytics
                 return render_template(
@@ -625,18 +667,21 @@ def setup_neuroglancer(app, config):
 
         # Return 'info' json
         if path_split[-1] == "info":
+            # stat = os.stat(datapath)
+            # file_ino = str(stat.st_ino)
+            # modification_time = str(stat.st_mtime)
             try:
-                datapath = open_ng_dataset(config, datapath)
+                datapath_key = open_ng_dataset(config, datapath)
                 b = io.BytesIO()
                 b.write(
                     json.dumps(
-                        config.opendata[datapath].ng_json, indent=2, sort_keys=False
+                        config.opendata[datapath_key].ng_json, indent=2, sort_keys=False
                     ).encode()
                 )
                 # b.write(json.dumps(config.opendata[datapath].ng_json).encode())
                 b.seek(0)
 
-                return jsonify(config.opendata[datapath].ng_json)
+                return jsonify(config.opendata[datapath_key].ng_json)
             # return send_file(
             #     b,
             #     as_attachment=False,
@@ -659,7 +704,7 @@ def setup_neuroglancer(app, config):
 
         ## Serve neuroglancer raw-format files
         elif isinstance(match(file_pattern, path_split[-1]), Match_class):
-            datapath = open_ng_dataset(config, datapath)
+            datapath_key = open_ng_dataset(config, datapath)
             # logger.info(request.path + '\n')
 
             x, y, z = path_split[-1].split("_")
@@ -675,13 +720,13 @@ def setup_neuroglancer(app, config):
             img = None
             # key = f'ng_{datapath}-{res}-{x}-{y}-{z}'
             if config.cache is not None:
-                key = f"ng_{datapath}-{res}-{x}-{y}-{z}"
+                key = f"ng_{datapath_key}-{res}-{x}-{y}-{z}"
                 img = config.cache.get(key, default=None, retry=True)
                 if img is not None:
                     logger.info("ng cache found")
 
             if img is None:
-                img = config.opendata[datapath][
+                img = config.opendata[datapath_key][
                     res,
                     slice(0, 1),
                     slice(None),
@@ -691,15 +736,16 @@ def setup_neuroglancer(app, config):
                 ]
                 while img.ndim > 4:
                     img = np.squeeze(img, axis=0)
-
+                while img.ndim < 4:
+                    img = np.expand_dims(img, axis=0)
                 # logger.info(img.shape)
 
                 img = encode_ng_file(
-                    img, config.opendata[datapath].ng_json["num_channels"]
+                    img, config.opendata[datapath_key].ng_json["num_channels"]
                 )
 
                 if config.cache is not None:
-                    config.cache.set(key, img, expire=None, tag=datapath, retry=True)
+                    config.cache.set(key, img, expire=None, tag=datapath_key, retry=True)
                     logger.info("ng cache saved")
             # Flask return of bytesIO as file
             # return Response(response=img, status=200,
