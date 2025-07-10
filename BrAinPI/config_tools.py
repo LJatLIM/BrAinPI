@@ -193,6 +193,7 @@ class config:
             import tiff_loader
             self.opendata[key] = tiff_loader.tiff_loader(
                 dataPath,
+                True,
                 self.pyramid_images_connection, 
                 self.settings.get("tif_loader", "pyramids_images_allowed_store_size_gb"),
                 self.settings.get("tif_loader", "pyramids_images_allowed_generation_size_gb"),
@@ -227,6 +228,7 @@ class config:
             import jp2_loader
             self.opendata[key] = jp2_loader.jp2_loader(
                 dataPath,
+                True,
                 self.pyramid_images_connection,
                 self.settings.get("jp2_loader", "pyramids_images_allowed_store_size_gb"),
                 self.settings.get("jp2_loader", "pyramids_images_allowed_generation_size_gb"),
