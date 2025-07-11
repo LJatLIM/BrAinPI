@@ -7,7 +7,7 @@ import glymur
 import tifffile
 import hashlib
 from pathlib import Path
-import shutil
+import math
 import time
 from filelock import FileLock
 import tiff_loader
@@ -131,8 +131,8 @@ def separate_process_generation(
                 data[..., ::mag, ::mag, :],
                 subfiletype=1,
                 resolution=(
-                    xy_resolution[0] / mag,
-                    xy_resolution[1] / mag,
+                    xy_resolution[0] * mag,
+                    xy_resolution[1] * mag,
                 ),
                 **options,
             )
@@ -148,9 +148,10 @@ class jp2_loader:
     def __init__(
         self,
         location,
+        pyramid_generation_allowed=False,
         pyramid_images_connection = {},
         pyramids_images_allowed_store_size_gb = 100,
-        pyramids_images_allowed_generation_size_gb = 10,
+        pyramids_images_allowed_generation_size_gb = 2,
         pyramids_images_store=None,
         extension_type=".ome.tif",
         ResolutionLevelLock=None,
@@ -161,6 +162,7 @@ class jp2_loader:
         """
         Args:
             location (str): Path to the JP2 file.
+            pyramid_generation_allowed (bool): Flag to allow pyramid image generation. Defaults to False.
             pyramid_images_connection (dict): A dictionary for mapping hash values to pyramid images.
             pyramids_images_allowed_store_size_gb (float): Maximum allowed size for the pyramid images store in GB. Defaults to 100.
             pyramids_images_allowed_generation_size_gb (float): Maximum allowed size for the pyramid image generation in GB. Defaults to 10.
@@ -204,38 +206,72 @@ class jp2_loader:
         self.verbose = verbose
         self.squeeze = squeeze
         self.cache = cache
-        # self.metaData = {}
+        self.pyramid_generation_allowed = pyramid_generation_allowed
+        
         if self.datapath.endswith(".jp2"):
             jp2_img = self.validate_jp2_file(self.datapath)
+            # if self.pyramid_generation_allowed:
             self.tile_size = jp2_img.tilesize if jp2_img.tilesize else (128, 128)
-            self.pyramid_builders(jp2_img)
-            self.tif_obj = tiff_loader.tiff_loader(
-                self.datapath,
-                pyramid_images_connection,
-                self.allowed_store_size_gb,
-                self.allowed_file_size_gb,
-                self.pyramids_images_store,
-                self.extension_type,
-                ResolutionLevelLock = self.ResolutionLevelLock,
-                squeeze=self.squeeze,
-                cache=self.cache,
-            )
-            self.metaData = self.tif_obj.metaData
-            self.ResolutionLevelLock = self.tif_obj.ResolutionLevelLock
-            self.shape = self.tif_obj.shape
-            self.ndim = self.tif_obj.ndim
-            self.chunks = self.tif_obj.chunks
-            self.resolution = self.tif_obj.resolution
-            self.dtype = self.tif_obj.dtype
-            self.TimePoints = self.tif_obj.TimePoints
-            self.ResolutionLevels = self.tif_obj.ResolutionLevels
-            self.Channels = self.tif_obj.Channels
+            if self.pyramid_generation_allowed:
+                self.pyramid_builders(jp2_img)
+                self.tif_obj = tiff_loader.tiff_loader(
+                    self.datapath,
+                    True,
+                    pyramid_images_connection,
+                    self.allowed_store_size_gb,
+                    self.allowed_file_size_gb,
+                    self.pyramids_images_store,
+                    self.extension_type,
+                    ResolutionLevelLock = self.ResolutionLevelLock,
+                    squeeze=self.squeeze,
+                    cache=self.cache,
+                )
+                self.metaData = self.tif_obj.metaData
+                self.ResolutionLevelLock = self.tif_obj.ResolutionLevelLock
+                self.shape = self.tif_obj.shape
+                self.ndim = self.tif_obj.ndim
+                self.chunks = self.tif_obj.chunks
+                self.resolution = self.tif_obj.resolution
+                self.dtype = self.tif_obj.dtype
+                self.TimePoints = self.tif_obj.TimePoints
+                self.ResolutionLevels = self.tif_obj.ResolutionLevels
+                self.Channels = self.tif_obj.Channels
+            else:
+                self.TimePoints = 1
+                self.Channels = 1
+                cod = next(seg for seg in jp2_img.codestream.segment if seg.marker_id == 'COD')
+                self.ResolutionLevels = cod.num_res
+                self.ndim  = jp2_img.ndim
+                self.dtype = jp2_img.dtype
+                self.metaData = {}
+                def _base_voxel():
+                    for box in jp2_img.box:
+                        if box.box_id == 'res ':
+                            for sub in box.box:
+                                if sub.box_id.strip() in ('resc', 'resd'):
+                                    v = sub.vertical_numerator   / 10**sub.vertical_exponent
+                                    h = sub.horizontal_numerator / 10**sub.horizontal_exponent
+                                    return (v, h)
+                    return (1.0, 1.0)      # fall‑back = unit pixels
+                base_voxel = _base_voxel()     
+                for r in range(self.ResolutionLevels):
+                    for t, c in itertools.product(range(self.TimePoints), range(self.Channels)):
+                        scale   = 2**r                   # 2**r  (dyadic down‑sampling)
+                        voxel   = tuple(v * scale for v in base_voxel)
+                        chunks  = (self.tile_size[0],self.tile_size[1])
+                        shape_r = tuple(math.ceil(s / scale) for s in jp2_img.shape[:2])
 
-        # self.change_resolution_lock(self.ResolutionLevelLock)
+                        self.metaData[r, t, c, 'shape'] = (1, 1, 1, shape_r[0], shape_r[1])
+                        self.metaData[r, t, c, 'resolution'] = voxel
+                        self.metaData[r, t, c, 'chunks'] = (1, 1, 1, chunks[0], chunks[1])
+                        self.metaData[r, t, c, 'dtype'] = self.dtype
+                        self.metaData[r, t, c, 'ndim'] = self.ndim
+                self.metaData['datapath'] = self.datapath
+                self.change_resolution_lock(self.ResolutionLevelLock)
 
     def validate_jp2_file(self, file_path):
         """
-        Validate the JP2 file for compatibility and size.
+        Validate the JP2 file for compatibility and size. Only supports 2D RGB images now.
 
         Args:
             file_path (str): Path to the JP2 file.
@@ -412,93 +448,103 @@ class jp2_loader:
         """
         Overwrite the getitem method by reusing the geitem function of tif_loader
         """
-        return self.tif_obj[key]
-
-        res = 0 if self.ResolutionLevelLock is None else self.ResolutionLevelLock
-        logger.info(key)
-        if (
-            isinstance(key, slice) == False
-            and isinstance(key, int) == False
-            and len(key) == 6
-        ):
-            res = key[0]
-            if res >= self.ResolutionLevels:
-                raise ValueError("Layer is larger than the number of ResolutionLevels")
-            key = tuple([x for x in key[1::]])
-        logger.info(res)
-        logger.info(key)
-
-        if isinstance(key, int):
-            key = [slice(key, key + 1)]
-            for _ in range(self.ndim - 1):
-                key.append(slice(None))
-            key = tuple(key)
-
-        if isinstance(key, tuple):
-            key = [slice(x, x + 1) if isinstance(x, int) else x for x in key]
-            while len(key) < self.ndim:
-                key.append(slice(None))
-            key = tuple(key)
-
-        logger.info(key)
-        newKey = []
-        for ss in key:
-            if ss.start is None and isinstance(ss.stop, int):
-                newKey.append(slice(ss.stop, ss.stop + 1, ss.step))
-            else:
-                newKey.append(ss)
-
-        key = tuple(newKey)
-        logger.info(key)
-
-        array = self.getSlice(r=res, t=key[0], c=key[1], z=key[2], y=key[3], x=key[4])
-
-        if self.squeeze:
-            return np.squeeze(array)
+        if self.pyramid_generation_allowed:
+            return self.tif_obj[key]
         else:
-            return array
+            
 
-    # def getSlice(self, r, t, c, z, y, x):
-    #     """
-    #     Access the requested slice based on resolution level and
-    #     5-dimentional (t,c,z,y,x) access to zarr array. Retrieve a 
-    #     slice of the image at a specific resolution.
+            res = 0 if self.ResolutionLevelLock is None else self.ResolutionLevelLock
+            logger.info(key)
+            if (
+                isinstance(key, slice) == False
+                and isinstance(key, int) == False
+                and len(key) == 6
+            ):
+                res = key[0]
+                if res >= self.ResolutionLevels:
+                    raise ValueError("Layer is larger than the number of ResolutionLevels")
+                key = tuple([x for x in key[1::]])
+            logger.info(res)
+            logger.info(key)
 
-    #     Args:
-    #         r (int): Resolution level.
-    #         t (slice): Time dimension slice.
-    #         c (slice): Channel dimension slice.
-    #         z (slice): Z-axis slice.
-    #         y (slice): Y-axis slice.
-    #         x (slice): X-axis slice.
+            if isinstance(key, int):
+                key = [slice(key, key + 1)]
+                for _ in range(self.ndim - 1):
+                    key.append(slice(None))
+                key = tuple(key)
 
-    #     Returns:
-    #         np.ndarray: The requested slice.
-    #     """
+            if isinstance(key, tuple):
+                key = [slice(x, x + 1) if isinstance(x, int) else x for x in key]
+                while len(key) < self.ndim:
+                    key.append(slice(None))
+                key = tuple(key)
 
-    #     incomingSlices = (r, t, c, z, y, x)
-    #     logger.info(incomingSlices)
-    #     if self.cache is not None:
-    #         key = f"{self.datapath}_getSlice_{str(incomingSlices)}"
-    #         # key = self.datapath + '_getSlice_' + str(incomingSlices)
-    #         result = self.cache.get(key, default=None, retry=True)
-    #         if result is not None:
-    #             logger.info(f"Returned from cache: {incomingSlices}")
-    #             return result
-    #     result = self.jp2_img[y.start*2**r:y.stop*2**r:2**r,x.start*2**r:x.stop*2**r:2**r]
-    #     # result = self.arrays[r][t, c, z, y, x]
+            logger.info(key)
+            newKey = []
+            for ss in key:
+                if ss.start is None and isinstance(ss.stop, int):
+                    newKey.append(slice(ss.stop, ss.stop + 1, ss.step))
+                else:
+                    newKey.append(ss)
 
-    #     if self.cache is not None:
-    #         self.cache.set(key, result, expire=None, tag=self.datapath, retry=True)
-    #         # test = True
-    #         # while test:
-    #         #     # logger.info('Caching slice')
-    #         #     self.cache.set(key, result, expire=None, tag=self.datapath, retry=True)
-    #         #     if result == self.getSlice(*incomingSlices):
-    #         #         test = False
+            key = tuple(newKey)
+            logger.info(key)
 
-    #     return result
-    #     return self.open_array(r)[t,c,z,y,x]
+            array = self.getSlice(r=res, t=key[0], c=key[1], z=key[2], y=key[3], x=key[4])
+
+            if self.squeeze:
+                return np.squeeze(array)
+            else:
+                while len(array.shape) < 5:
+                    array = np.expand_dims(array, axis=0)
+                return array
+
+    def getSlice(self, r, t, c, z, y, x):
+        """
+        Access the requested slice based on resolution level and
+        5-dimentional (t,c,z,y,x) access to zarr array. Retrieve a 
+        slice of the image at a specific resolution.
+
+        Args:
+            r (int): Resolution level.
+            t (slice): Time dimension slice.
+            c (slice): Channel dimension slice.
+            z (slice): Z-axis slice.
+            y (slice): Y-axis slice.
+            x (slice): X-axis slice.
+
+        Returns:
+            np.ndarray: The requested slice.
+        """
+
+        incomingSlices = (r, t, c, z, y, x)
+        logger.info(incomingSlices)
+        if self.cache is not None:
+            key = f"{self.datapath}_getSlice_{str(incomingSlices)}"
+            # key = self.datapath + '_getSlice_' + str(incomingSlices)
+            result = self.cache.get(key, default=None, retry=True)
+            if result is not None:
+                logger.info(f"Returned from cache: {incomingSlices}")
+                return result
+        y_start = y.start*2**r if y.start*2**r >= 0 else 0
+        y_stop = y.stop*2**r if y.stop*2**r <= self.shape[-2] else self.shape[-2]
+        x_start = x.start*2**r if x.start*2**r >= 0 else 0
+        x_stop = x.stop*2**r if x.stop*2**r <= self.shape[-1] else self.shape[-1]
+        result = self.jp2_img[y_start:y_stop:2**r,x_start:x_stop:2**r]
+        # result = self.jp2_img[y.start*2**r:y.stop*2**r:2**r,x.start*2**r:x.stop*2**r:2**r]
+        # result = self.arrays[r][t, c, z, y, x]
+
+        if self.cache is not None:
+            self.cache.set(key, result, expire=None, tag=self.datapath, retry=True)
+            # test = True
+            # while test:
+            #     # logger.info('Caching slice')
+            #     self.cache.set(key, result, expire=None, tag=self.datapath, retry=True)
+            #     if result == self.getSlice(*incomingSlices):
+            #         test = False
+
+        return result
+        return self.open_array(r)[t,c,z,y,x]
 
     def locationGenerator(self, res):
         """
