@@ -219,14 +219,14 @@ class nifti_zarr_loader:
 
                 # Collect dataset info
                 self.metaData[r, t, c, "chunks"] = (1, 1, *array.chunks[-3:])
-                dtype = array.dtype
-                if dtype == "int8":
-                    dtype = "uint8"
-                elif dtype == "int16":
-                    dtype = "uint16"
-                elif dtype == "float64" or dtype == "float16":
-                    dtype = "float32"
-                self.metaData[r, t, c, "dtype"] = dtype
+                # dtype = array.dtype
+                # if dtype == "int8":
+                #     dtype = "uint8"
+                # elif dtype == "int16":
+                #     dtype = "uint16"
+                # elif dtype == "float64" or dtype == "float16":
+                #     dtype = "float32"
+                self.metaData[r, t, c, "dtype"] = array.dtype
                 self.metaData[r, t, c, "ndim"] = array.ndim
 
                 try:
@@ -473,6 +473,8 @@ class nifti_zarr_loader:
         if self.squeeze:
             return np.squeeze(array)
         else:
+            while len(array.shape) < 5:
+                    array = np.expand_dims(array, axis=0)
             return array
 
     def _get_memorize_cache(
@@ -530,7 +532,7 @@ class nifti_zarr_loader:
         result = self.arrays[r][tp]
         # if len(result.shape) < 4:
         #     result = np.expand_dims(result, axis=0)
-        result = result.astype(self.dtype)
+        # result = result.astype('uint16')
         logger.info(result.shape)
         if self.cache is not None:
             # print("Cache Status:")
