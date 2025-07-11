@@ -190,6 +190,8 @@ class terafly_loader:
         if self.squeeze:
             return np.squeeze(array)
         else:
+            while len(array.shape) < 5:
+                array = np.expand_dims(array, axis=0)
             return array
 
     def getSlice(self, r, t, c, z, y, x):
