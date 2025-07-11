@@ -761,15 +761,15 @@ def setup_neuroglancer(app, config):
                     slice(x[0], x[1]),
                 ]
                 # this is only for tif RGB files
-                # print(f"img shape before: {img.shape}")
-                # print(f"img ndim before: {img.ndim}")
+                # logger.info(f"img shape before: {img.shape}")
+                # logger.info(f"img ndim before: {img.ndim}")
                 if img.ndim == 6:
                     # remove the first 3 dimension and convert to grayscale
                     img = cv2.cvtColor(
                         img[(0,)*3] , cv2.COLOR_RGB2GRAY
                     )
-                # print(f"img shape: {img.shape}")
-                # print(f"img ndim: {img.ndim}")
+                # logger.info(f"img shape: {img.shape}")
+                # logger.info(f"img ndim: {img.ndim}")
                 while img.ndim > 4:
                     img = np.squeeze(img, axis=0)
                 while img.ndim < 4:
