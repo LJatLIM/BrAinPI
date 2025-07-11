@@ -13,7 +13,7 @@ from neuroglancer_scripts.chunk_encoding import RawChunkEncoder
 import numpy as np
 import os
 from logger_tools import logger
-
+import cv2
 ## Project imports
 import utils
 from utils import compress_flask_response
@@ -101,6 +101,18 @@ def ng_shader(numpy_like_object):
                 windowMaxs.append(65535)
             elif numpy_like_object.dtype == "uint8":
                 windowMaxs.append(255)
+            elif numpy_like_object.dtype == "int16":
+                windowMaxs.append(32767)
+            elif numpy_like_object.dtype == "int8":
+                windowMaxs.append(127)
+            elif numpy_like_object.dtype == "int32":
+                windowMaxs.append(2147483647)
+            elif numpy_like_object.dtype == "uint32":
+                windowMaxs.append(4294967295)
+            elif numpy_like_object.dtype == "uint64": 
+                windowMaxs.append(18446744073709551615)
+            elif numpy_like_object.dtype == "int64":
+                windowMaxs.append(9223372036854775807)
             elif str(numpy_like_object.dtype).startswith("float"):
                 windowMaxs.append(lowestResVolume.max())
                 # windowMaxs.append(1)
@@ -215,7 +227,18 @@ def ng_json(numpy_like_object, file=None, different_chunks=False):
     metadata = utils.metaDataExtraction(numpy_like_object, strKey=False)
 
     neuro_info = {}
-    neuro_info["data_type"] = metadata["dtype"]
+    
+    dtype = metadata["dtype"]
+    # handle nifit files which havae float 16/64
+    # if dtype == "int8":
+    #     dtype = "uint8"
+    # elif dtype == "int16":
+    #     dtype = "uint16"
+    # elif dtype == "float64" or dtype == "float16":
+    #     dtype = "float32"
+    if dtype == "float16" or dtype == "float64":
+        dtype = "float32"
+    neuro_info["data_type"] = dtype
     neuro_info["num_channels"] = metadata["Channels"]
 
     scales = []
@@ -456,6 +479,9 @@ def neuroglancer_dtypes():
         # '.weave',
         # '.z_sharded'
         ".terafly",
+        ".tif",
+        ".tiff",
+        ".jp2"
     ]
 
 
@@ -734,6 +760,16 @@ def setup_neuroglancer(app, config):
                     slice(y[0], y[1]),
                     slice(x[0], x[1]),
                 ]
+                # this is only for tif RGB files
+                # print(f"img shape before: {img.shape}")
+                # print(f"img ndim before: {img.ndim}")
+                if img.ndim == 6:
+                    # remove the first 3 dimension and convert to grayscale
+                    img = cv2.cvtColor(
+                        img[(0,)*3] , cv2.COLOR_RGB2GRAY
+                    )
+                # print(f"img shape: {img.shape}")
+                # print(f"img ndim: {img.ndim}")
                 while img.ndim > 4:
                     img = np.squeeze(img, axis=0)
                 while img.ndim < 4:
