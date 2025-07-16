@@ -3,3 +3,4 @@ channels:
   - conda-forge
 dependencies:
   - glymur            # handles glymur modules for jp2 files, which can only be installed via conda
+  - pip
