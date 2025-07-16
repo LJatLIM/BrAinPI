@@ -128,8 +128,8 @@ def setup_auth(app):
         remote_ip = request.remote_addr #<--Potential to log attempts and restrict number of tries
         username = request.form.get('username')
         password = request.form.get('password')
-        remember = True if request.form.get('remember') else False
-        
+        #remember = True if request.form.get('remember') else False
+        remember = True
         ## Check user against domain server
         user = False # Default to False for security
         if 'auth' in settings and not settings.getboolean('auth','bypass_auth'):
