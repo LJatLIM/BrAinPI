@@ -71,6 +71,32 @@ def ng_shader(numpy_like_object):
 
     # Extract values for setting LUTs in proper range
     # User omero values if they exist otherwise determine from lowest resolution multiscale
+    if metadata["ndim"] == 6:
+        print("RGB dataset detected, using RGB shader")
+        shaderStr = ""
+        # shaderStr = shaderStr + '// Init for each channel:\n\n'
+        # shaderStr = shaderStr + '// Channel visability check boxes\n'
+
+        
+        shaderStr = (
+                shaderStr
+                + f"#uicontrol bool red   checkbox(default=true)\n"
+                + f"#uicontrol bool green checkbox(default=true)\n"
+                + f"#uicontrol bool blue  checkbox(default=true)\n"
+            )
+        shaderStr = shaderStr + "\n\nvoid main() {\n\n"
+        # shaderStr = shaderStr + '// For each color, if visable, get data, adjust with lut, then apply to color\n'
+
+
+        shaderStr = shaderStr + f"  float R = red   ? toNormalized(getDataValue(0)) : 0.0;\n"
+        shaderStr = shaderStr + f"  float G = green ? toNormalized(getDataValue(1)) : 0.0;\n"
+        shaderStr = shaderStr + f"  float B = blue  ? toNormalized(getDataValue(2)) : 0.0;\n"
+        shaderStr = shaderStr + f"  vec3 rgb = vec3(R,G,B);\n\n"
+        shaderStr = shaderStr + "emitRGB(rgb);\n"
+
+        shaderStr = shaderStr + "}"
+        return shaderStr
+    
     channelMins = []
     channelMaxs = []
     windowMins = []
@@ -239,7 +265,7 @@ def ng_json(numpy_like_object, file=None, different_chunks=False):
     if dtype == "float16" or dtype == "float64":
         dtype = "float32"
     neuro_info["data_type"] = dtype
-    neuro_info["num_channels"] = metadata["Channels"]
+    neuro_info["num_channels"] = 3 if metadata["ndim"] == 6 else metadata["Channels"]
 
     scales = []
     current_scale = {}
@@ -764,18 +790,16 @@ def setup_neuroglancer(app, config):
                 # logger.info(f"img shape before: {img.shape}")
                 # logger.info(f"img ndim before: {img.ndim}")
                 if img.ndim == 6:
-                    # remove the first 3 dimension and convert to grayscale
-                    img = cv2.cvtColor(
-                        img[(0,)*3] , cv2.COLOR_RGB2GRAY
-                    )
-                # logger.info(f"img shape: {img.shape}")
+                    # Step 1: slice away first three dimensions
+                    reduced = img[0, 0, ...]   # shape becomes (d3, d4, d5)
+
+                    # Step 2: move last axis to the front
+                    img = np.moveaxis(reduced, -1, 0)  # shape becomes (d5, d3, d4)
                 # logger.info(f"img ndim: {img.ndim}")
                 while img.ndim > 4:
                     img = np.squeeze(img, axis=0)
                 while img.ndim < 4:
                     img = np.expand_dims(img, axis=0)
-                # logger.info(img.shape)
-
                 img = encode_ng_file(
                     img, config.opendata[datapath_key].ng_json["num_channels"]
                 )

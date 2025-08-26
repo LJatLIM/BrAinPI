@@ -196,7 +196,7 @@ class tiff_loader:
             self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-2],
             self.metaData[self.ResolutionLevelLock, 0, 0, 'shape'][-1]
         )
-        self.ndim = len(self.shape)
+        self.ndim = len(self.shape) + 1 if self.type.endswith("S") else len(self.shape)
         self.chunks = self.metaData[self.ResolutionLevelLock,0,0,'chunks']
         self.resolution = self.metaData[self.ResolutionLevelLock,0,0,'resolution']
         self.dtype = self.metaData[self.ResolutionLevelLock,0,0,'dtype']
@@ -245,6 +245,7 @@ class tiff_loader:
         res = 0 if self.ResolutionLevelLock is None else self.ResolutionLevelLock
         logger.info(key)
         if isinstance(key,slice) == False and isinstance(key,int) == False and len(key) == 6:
+        # if isinstance(key,slice) == False and isinstance(key,int) == False:
             res = key[0]
             if res >= self.ResolutionLevels:
                 raise ValueError('Layer is larger than the number of ResolutionLevels')
@@ -283,6 +284,7 @@ class tiff_loader:
                         z = key[2],
                         y = key[3],
                         x = key[4]
+                        # s = key[5] if len(key) > 5 else slice(None)
                         )
         if self.squeeze:
             return np.squeeze(array)
@@ -302,7 +304,7 @@ class tiff_loader:
             z (slice): Z-axis slice.
             y (slice): Y-axis slice.
             x (slice): X-axis slice.
-
+            # s (slice): S-axis slice (if applicable).
         Returns:
             np.ndarray: The requested image slice.
         """
@@ -340,6 +342,8 @@ class tiff_loader:
             list_tp[self.axes_pos_dic.get("Y")] = y
         if self.axes_pos_dic.get("X") != None:
             list_tp[self.axes_pos_dic.get("X")] = x
+        # if self.axes_pos_dic.get("S") != None:
+        #     list_tp[self.axes_pos_dic.get("S")] = s
         logger.info(f'{list_tp},{self.type}')
         zarr_array = None
         if self.is_pyramidal:
