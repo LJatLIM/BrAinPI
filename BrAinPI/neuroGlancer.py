@@ -789,12 +789,9 @@ def setup_neuroglancer(app, config):
                 # this is only for tif RGB files
                 # logger.info(f"img shape before: {img.shape}")
                 # logger.info(f"img ndim before: {img.ndim}")
-                if img.ndim == 6:
-                    # Step 1: slice away first three dimensions
-                    reduced = img[0, 0, ...]   # shape becomes (d3, d4, d5)
-
-                    # Step 2: move last axis to the front
-                    img = np.moveaxis(reduced, -1, 0)  # shape becomes (d5, d3, d4)
+            if img.ndim == 6:
+                # drop first two axes, keep RGB, move channels first
+                img = np.moveaxis(img[0, 0, ..., :3], -1, 0)
                 # logger.info(f"img ndim: {img.ndim}")
                 while img.ndim > 4:
                     img = np.squeeze(img, axis=0)
