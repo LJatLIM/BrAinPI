@@ -66,23 +66,23 @@ def where_is_that_chunk(chunk_name='0.0.1.3.14', dataset_shape=(1,1,2,23857,1462
     
     location['tStart'] = t * chunk_size[0]
     t = location['tStart'] + chunk_size[0]
-    location['tStop'] = t if t <= dataset_shape[0] else None
+    location['tStop'] = t if t <= dataset_shape[0] else dataset_shape[0]
     
     location['cStart'] = c * chunk_size[1]
     c = location['cStart'] + chunk_size[1]
-    location['cStop'] = c if c <= dataset_shape[1] else None
+    location['cStop'] = c if c <= dataset_shape[1] else dataset_shape[1]
     
     location['zStart'] = z * chunk_size[2]
     z = location['zStart'] + chunk_size[2]
-    location['zStop'] = z if z <= dataset_shape[2] else None
+    location['zStop'] = z if z <= dataset_shape[2] else dataset_shape[2]
     
     location['yStart'] = y * chunk_size[3]
     y = location['yStart'] + chunk_size[3]
-    location['yStop'] = y if y <= dataset_shape[3] else None
+    location['yStop'] = y if y <= dataset_shape[3] else dataset_shape[3]
     
     location['xStart'] = x * chunk_size[4]
     x = location['xStart'] + chunk_size[4]
-    location['xStop'] = x if x <= dataset_shape[4] else None
+    location['xStop'] = x if x <= dataset_shape[4] else dataset_shape[4]
     
     return location
 
@@ -715,11 +715,15 @@ def setup_omezarr(app, config):
                 # logger.info(456)
 
             # Determine where the chunk is in the actual dataset
-            dataset_shape = config.opendata[datapath].metadata[(resolution, 0, 0, 'shape')]
-            # logger.info(dataset_shape)
+            # dataset_shape = config.opendata[datapath].metadata[(resolution, 0, 0, 'shape')]
+            # logger.info(f"chunk_name, {chunk_name}")
+            # logger.info(f"dataset_shape, {dataset_shape}")
+            # logger.info(f"chunk_size, {chunk_size}")
+            # dataset_shape = config.opendata[datapath].metadata['shape']
+            dataset_shape = (config.opendata[datapath].metadata['TimePoints'],config.opendata[datapath].metadata['Channels'],*config.opendata[datapath].metadata[(resolution, 0, 0, 'shape')][-3:])
             locationDict = where_is_that_chunk(chunk_name=chunk_name, dataset_shape=dataset_shape, chunk_size=chunk_size)
-            # logger.info('Chunk is here:')
-            # logger.info(locationDict)
+            logger.info('Chunk is here:')
+            logger.info(locationDict)
 
             chunk = None
             if config.cache is not None:
