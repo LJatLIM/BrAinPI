@@ -1,31 +1,30 @@
 # -*- coding: utf-8 -*-
 """
 Created on Mon May 16 22:48:44 2022
-
 @author: awatson
 """
 
 # import zarr
+from logger_tools import logger
 import numpy as np
 import numcodecs
 from numcodecs import Blosc
 try:
     from imagecodecs.numcodecs import JpegXl
     numcodecs.register_codec(JpegXl)
-    # print('Imported JpegXl')
+    # logger.info('Imported JpegXl')
 except:
     pass
 try:
     from imagecodecs.numcodecs import Jpegxl
     numcodecs.register_codec(Jpegxl)
-    # print('Imported Jpegxl')
+    # logger.info('Imported Jpegxl')
 except:
     pass
 import io
 import re
 import os
 import math
-
 from flask import (
     render_template,
     request,
@@ -45,38 +44,62 @@ import utils
 
 
 def where_is_that_chunk(chunk_name='0.0.1.3.14', dataset_shape=(1,1,2,23857,14623), chunk_size=(1,1,1,1000,1000)):
-    '''
-    Given a chunk file name, what is the pixel coordinates for that chunk in a larger datasets
-    '''
+    """
+    Compute the pixel coordinate ranges for a given chunk in a larger dataset.
+
+    The chunk name is assumed to be in the format 't.c.z.y.x', and each component
+    is multiplied by the corresponding dimension of chunk_size to determine start and stop indices.
+
+    Parameters:
+        chunk_name (str): A dot-separated string indicating the chunk indices for each dimension.
+        dataset_shape (tuple): The shape of the full dataset as (t, c, z, y, x).
+        chunk_size (tuple): The size of each chunk as (t, c, z, y, x).
+
+    Returns:
+        dict: A dictionary with keys 'tStart', 'tStop', 'cStart', 'cStop', 'zStart', 'zStop', 'yStart', 'yStop', 'xStart', 'xStop'
+              representing the start and stop coordinates for each respective dimension. If the stop index exceeds
+              the dataset dimension, the corresponding value is set to None.
+    """
     t,c,z,y,x = (int(x) for x in chunk_name.split('.'))
     
     location = {}
     
     location['tStart'] = t * chunk_size[0]
     t = location['tStart'] + chunk_size[0]
-    location['tStop'] = t if t <= dataset_shape[0] else None
+    location['tStop'] = t if t <= dataset_shape[0] else dataset_shape[0]
     
     location['cStart'] = c * chunk_size[1]
     c = location['cStart'] + chunk_size[1]
-    location['cStop'] = c if c <= dataset_shape[1] else None
+    location['cStop'] = c if c <= dataset_shape[1] else dataset_shape[1]
     
     location['zStart'] = z * chunk_size[2]
     z = location['zStart'] + chunk_size[2]
-    location['zStop'] = z if z <= dataset_shape[2] else None
+    location['zStop'] = z if z <= dataset_shape[2] else dataset_shape[2]
     
     location['yStart'] = y * chunk_size[3]
     y = location['yStart'] + chunk_size[3]
-    location['yStop'] = y if y <= dataset_shape[3] else None
+    location['yStop'] = y if y <= dataset_shape[3] else dataset_shape[3]
     
     location['xStart'] = x * chunk_size[4]
     x = location['xStart'] + chunk_size[4]
-    location['xStop'] = x if x <= dataset_shape[4] else None
+    location['xStop'] = x if x <= dataset_shape[4] else dataset_shape[4]
     
     return location
 
 
 def get_chunk(locationDict,res,dataset, chunk_size):
+    """
+    Extract a chunk of data from the dataset using the coordinate ranges provided.
 
+    Parameters:
+        locationDict (dict): A dictionary containing coordinate ranges for each dimension.
+        res (int): The resolution level at which to retrieve the data.
+        dataset (numpy.ndarray or similar): The source dataset from which to extract the chunk.
+        chunk_size (tuple): The size of the chunk in each dimension.
+
+    Returns:
+        numpy.ndarray: The extracted chunk of data.
+    """
     return dataset[
         res,
         slice(locationDict['tStart'],locationDict['tStop']),
@@ -88,6 +111,20 @@ def get_chunk(locationDict,res,dataset, chunk_size):
 
 
 def pad_chunk(chunk, chunk_size):
+    """
+    Pad a chunk of data with zeros if it does not match the specified chunk size.
+
+    This function creates a new numpy array with the given chunk_size, fills it with zeros,
+    and then copies the content of the original chunk into the top-left (or equivalent) corner
+    of the new array.
+
+    Parameters:
+        chunk (numpy.ndarray): The data chunk to pad.
+        chunk_size (tuple): The desired shape for the padded chunk.
+
+    Returns:
+        numpy.ndarray: The padded chunk, guaranteed to have the shape specified by chunk_size.
+    """
     if chunk.shape == chunk_size:
         return chunk
     
@@ -104,6 +141,13 @@ def pad_chunk(chunk, chunk_size):
 
 
 def get_compressor():
+    """
+    Create and return a compressor instance for encoding data.
+
+    Returns:
+        numcodecs.Blosc: A configured Blosc compressor using zstd codec with clevel=5,
+                          enabled shuffle, and blocksize set to 0.
+    """
     # return Blosc(cname='lz4',clevel=3)
     # return Blosc(cname='lz4', clevel=3, shuffle=Blosc.SHUFFLE, blocksize=0)
     return Blosc(cname='zstd', clevel=5, shuffle=Blosc.SHUFFLE, blocksize=0)
@@ -128,6 +172,19 @@ def get_compressor():
 #     return compressed
 
 def compress_zarr_chunk(np_array,compressor=get_compressor()):
+    """
+    Compress a numpy array chunk into a BytesIO buffer using the specified compressor.
+
+    The function converts the numpy array into a bytes stream and then applies the compressor.
+    The output is a BytesIO object that can be returned as a file-like response in a web framework.
+
+    Parameters:
+        np_array (numpy.ndarray): The data chunk to compress.
+        compressor (object): Compressor object (default is provided by get_compressor).
+
+    Returns:
+        io.BytesIO: A BytesIO object containing the compressed data.
+    """
     # buf = np.asarray(np_array).astype(np_array.dtype, casting="safe")
     buf = np_array.tobytes('C')
     if compressor is not None:
@@ -139,19 +196,40 @@ def compress_zarr_chunk(np_array,compressor=get_compressor()):
     return img_ram
 
 def chunks_combine_channels(metadata,resolution_level):
-    '''
+    """
     Assumes 5 dimensions and replaces channel dim (t,c,z,y,x) with the number of channels.
     This is good for neuroglancer compatibility because it enables all channels to be delivered with each chunk
     enabling a shader to mix all channels into RGB representation
 
-    return new chunk_size tuple
-    '''
+    Parameters:
+        metadata (dict): Metadata dictionary extracted from the dataset.
+        resolution_level (int): The resolution level for which the chunk metadata is extracted.
+
+    Returns:
+        tuple: The new chunk size tuple with channels combined.
+    """
+
     chunks = list(metadata[(resolution_level, 0, 0, 'chunks')])
     chunks[1] = metadata['Channels']
     return tuple(chunks)
 
 def get_zarray_file(numpy_like_dataset,resolution_level,combine_channels=False,force8Bit=False):
+    """
+    Generate the zarray metadata for an OME-Zarr dataset.
 
+    This function creates a metadata dictionary with the appropriate chunk sizes,
+    data type encoding, and compressor settings for a given resolution level.
+    It allows options for combining channels (for Neuroglancer compatibility) and forcing 8-bit data.
+
+    Parameters:
+        numpy_like_dataset: The dataset (as a numpy-like array) from which metadata is extracted.
+        resolution_level (int): The resolution level to use when generating metadata.
+        combine_channels (bool): If True, combines channels into each chunk. Default is False.
+        force8Bit (bool): If True, forces the data type to 8-bit. Default is False.
+
+    Returns:
+        dict: A dictionary representing the zarray metadata.
+    """
     metadata = utils.metaDataExtraction(numpy_like_dataset,strKey=False)
 
     zarray = {}
@@ -256,6 +334,20 @@ max_values = {
 #         return img_as_float64(array)
 
 def conv_dtype_value(value,fdtype,tdtype):
+    """
+    Convert a scalar value from one data type range to another based on maximum allowed values.
+
+    This is typically used to adjust intensity window values when converting image data from a higher bit depth
+    to 8-bit.
+
+    Parameters:
+        value (numeric): The value to convert.
+        fdtype: The original data type of the value.
+        tdtype: The target data type to which the value should be converted.
+
+    Returns:
+        int: The converted value rounded to the nearest integer.
+    """
     ratio = max_values[tdtype]/max_values[fdtype]
     return round(ratio * value)
 
@@ -264,7 +356,19 @@ def conv_dtype_value(value,fdtype,tdtype):
 #####################################
 
 def get_zattr_file(numpy_like_dataset,force8Bit=False):
+    """
+    Generate the zattr (attributes) metadata file for an OME-Zarr dataset.
 
+    The metadata includes creator information, multiscale configurations,
+    and OMERO metadata for channel windowing and display settings.
+
+    Parameters:
+        numpy_like_dataset: The dataset (as a numpy-like array) from which metadata is extracted.
+        force8Bit (bool): If True, forces window adjustments for 8-bit data. Default is False.
+
+    Returns:
+        dict: A dictionary representing the zattr metadata.
+    """
     metadata = utils.metaDataExtraction(numpy_like_dataset,strKey=False)
     # metadata = metaDataExtraction(numpy_like_dataset,strKey=False)
 
@@ -426,8 +530,20 @@ def get_zattr_file(numpy_like_dataset,force8Bit=False):
 
 
 def open_omezarr_dataset(config,datapath):
+    """
+    Open an OME-Zarr dataset using the provided configuration.
 
-    datapath = config.loadDataset(datapath)
+    This function calls a loader on the configuration object to load the dataset.
+    It may also perform additional setup for Neuroglancer functionality if needed.
+
+    Parameters:
+        config: A configuration object that contains methods to load the dataset.
+        datapath (str): The file system path to the dataset.
+
+    Returns:
+        The loaded dataset (the exact type depends on the configuration's implementation).
+    """
+    datapath = config.loadDataset(datapath,datapath)
 
     # if not hasattr(config.opendata[datapath],'ng_json'):
         # or not hasattr(config.opendata[datapath],'ng_files'):
@@ -456,7 +572,23 @@ exts = ['.ng.ome.zarr','.ome.zarr','.omezarr','.ome.ngff','.ngff']
 
 
 def setup_omezarr(app, config):
+    """
+    Setup the Flask routes to serve OME-Zarr datasets.
 
+    This function defines and registers a Flask route that inspects the requested URL path,
+    processes any special extensions (such as chunk size definitions or Neuroglancer flags),
+    and then returns the appropriate data (a chunk, .zarray, .zattrs, or .zgroup file)
+    as a response.
+
+    The inner function `omezarr_entry` is decorated with CORS support and registered as a route.
+
+    Parameters:
+        app: The Flask application instance.
+        config: A configuration object that provides dataset loading, caching, and metadata.
+
+    Returns:
+        The Flask application instance with the OME-Zarr route configured.
+    """
     chunks_size_pattern = '^.*[0-9]+x[0-9]+x[0-9]+.*$'  # desired chunk size designated as .##x##x##. where ## are int
     # designated as axes (z,y,x)
 
@@ -466,21 +598,32 @@ def setup_omezarr(app, config):
     Match_class = re.Match
 
     def omezarr_entry(req_path):
+        """
+        Inner route function to handle requests for OME-Zarr resources.
 
+        Determines if the request is for a chunk, .zarray, .zattrs, or .zgroup, then processes and
+        returns the appropriate response.
+
+        Parameters:
+            req_path (str): The remaining path requested after the base route.
+
+        Returns:
+            A Flask Response object containing the data or JSON metadata.
+        """
         path_split, datapath = get_html_split_and_associated_file_path(config,request)
 
-        # print(path_split)
-        # print(datapath)
+        # logger.info(path_split)
+        # logger.info(datapath)
         ##  HAck if ignores '.' as dimension_sperator
         try:
             new_path = path_split[-5:]
-            # print(new_path)
+            # logger.info(new_path)
             if all([isinstance(int(x),int) for x in new_path]):
-                # print('in if')
+                # logger.info('in if')
                 new_path = '.'.join(new_path)
-                # print(new_path)
+                # logger.info(new_path)
                 request.path = '/' + os.path.join(*path_split[:-5],new_path)
-                # print(request.path)
+                # logger.info(request.path)
                 path_split, datapath = get_html_split_and_associated_file_path(config,request)
             else:
                 pass
@@ -500,7 +643,7 @@ def setup_omezarr(app, config):
             if len(datapath.split(ext)) > 1:
                 datapath = datapath.replace(ext,'')
                 if ext == '.ng.ome.zarr': isNeuroGlancer = True
-                # print(f'DATAPATH MINUS EXT: {datapath}')
+                # logger.info(f'DATAPATH MINUS EXT: {datapath}')
                 break
 
         # Define chunk size if specified in the path otherwise keep None
@@ -508,8 +651,8 @@ def setup_omezarr(app, config):
         if match(chunks_size_pattern, datapath):
             # Modified chunk size must be designated as an extension that comes before any other extenstions
             # designated as .##x##x##. where ## is pixels numbers in axes (Z,Y,X)
-            print('INSIDE THE PATTERN ######################################')
-            print(datapath)
+            logger.info('INSIDE THE PATTERN ######################################')
+            logger.info(datapath)
             reverse_split = datapath.split('.')[::-1]
             any_matches = tuple(
                 (
@@ -522,7 +665,7 @@ def setup_omezarr(app, config):
             if len(any_matches) > 0:
                 for ii in any_matches:
                     chunk = ii.split('x')
-                    print(f'CHUNKS ######## {chunk}')
+                    logger.info(f'CHUNKS ######## {chunk}')
                     chunk_size = tuple(
                         (int(x) for x in chunk)
                     )
@@ -533,20 +676,20 @@ def setup_omezarr(app, config):
                         chunk_size = (1, *chunk_size)
                     elif len(chunk_size) == 2:
                         chunk_size = (1, 1, 1, *chunk_size)
-                    print(f'CHUNK SHAPE {chunk_size}')
+                    logger.info(f'CHUNK SHAPE {chunk_size}')
 
                     datapath = datapath.replace(f'.{ii}.', '.')
-                    print(f'DATAPATH ###### {datapath}')
-                    print(f'CHUNK SIZE ###### {chunk_size}')
+                    logger.info(f'DATAPATH ###### {datapath}')
+                    logger.info(f'CHUNK SIZE ###### {chunk_size}')
 
                     ####  SWITCH TO None to negate the chunk setting block and default to default chunks ####
                     # chunk_Size = None
                     # Only use the first match
                     break
 
-            print(path_split)
+            logger.info(path_split)
 
-        print(path_split)
+        logger.info(path_split)
         # Find the file system path to the dataset
         # Assumptions are neuroglancer only requests 'info' file or chunkfiles
         # If only the file name is requested this will redirect to a
@@ -556,25 +699,31 @@ def setup_omezarr(app, config):
             resolution = int(datapath.split('/')[-2])
 
             # Open dataset
-            datapath = '/' + os.path.join(*datapath.split('/')[:-2])
+            datapath = os.path.split(datapath)[0]
+            datapath = os.path.split(datapath)[0]
+            # datapath = '/' + os.path.join(*datapath.split('/')[:-2])
             datapath = open_omezarr_dataset(config,datapath)
             config.opendata[datapath].metadata
 
             if isNeuroGlancer:
-                # print(451)
+                # logger.info(451)
                 chunk_size = chunks_combine_channels(config.opendata[datapath].metadata,resolution)
-                # print(453)
-                # print(chunk_size)
+                # logger.info(453)
+                # logger.info(chunk_size)
             else:
                 chunk_size = config.opendata[datapath].metadata[(resolution,0,0,'chunks')]
-                # print(456)
+                # logger.info(456)
 
             # Determine where the chunk is in the actual dataset
-            dataset_shape = config.opendata[datapath].metadata[(resolution, 0, 0, 'shape')]
-            # print(dataset_shape)
+            # dataset_shape = config.opendata[datapath].metadata[(resolution, 0, 0, 'shape')]
+            # logger.info(f"chunk_name, {chunk_name}")
+            # logger.info(f"dataset_shape, {dataset_shape}")
+            # logger.info(f"chunk_size, {chunk_size}")
+            # dataset_shape = config.opendata[datapath].metadata['shape']
+            dataset_shape = (config.opendata[datapath].metadata['TimePoints'],config.opendata[datapath].metadata['Channels'],*config.opendata[datapath].metadata[(resolution, 0, 0, 'shape')][-3:])
             locationDict = where_is_that_chunk(chunk_name=chunk_name, dataset_shape=dataset_shape, chunk_size=chunk_size)
-            # print('Chunk is here:')
-            # print(locationDict)
+            logger.info('Chunk is here:')
+            logger.info(locationDict)
 
             chunk = None
             if config.cache is not None:
@@ -583,13 +732,13 @@ def setup_omezarr(app, config):
 
             if chunk is None:
                 chunk = get_chunk(locationDict,resolution,config.opendata[datapath],chunk_size)
-                # print(chunk.shape)
+                # logger.info(chunk.shape)
                 chunk = pad_chunk(chunk, chunk_size)
                 if force8Bit:
                     chunk = utils.conv_np_dtypes(chunk, 'uint8')
-                # print(chunk.shape)
+                # logger.info(chunk.shape)
                 # chunk = np.squeeze(chunk)
-                # print(chunk.shape)
+                # logger.info(chunk.shape)
                 chunk = compress_zarr_chunk(chunk,compressor=get_compressor())
 
                 # Add to cache
@@ -611,7 +760,9 @@ def setup_omezarr(app, config):
                 abort(404)
             try:
                 resolution = int(datapath.split('/')[-2])
-                datapath = '/' + os.path.join(*datapath.split('/')[:-2])
+                datapath = os.path.split(datapath)[0]
+                datapath = os.path.split(datapath)[0]
+                # datapath = '/' + os.path.join(*datapath.split('/')[:-2])
                 datapath = open_omezarr_dataset(config,datapath)
                 # return Response(response=get_zarray_file(config.opendata[datapath],resolution), status=200,
                 #                 mimetype="application/octet_stream")
@@ -621,7 +772,7 @@ def setup_omezarr(app, config):
         elif path_split[-1] == '.zattrs':
             if path_split[-2] == 'labels':
                 abort(404)
-            datapath = '/' + os.path.join(*datapath.split('/')[:-1])
+            datapath = os.path.split(datapath)[0]
             datapath = open_omezarr_dataset(config,datapath)
             # return Response(response=get_zattr_file(config.opendata[datapath]), status=200,
             #                 mimetype="application/octet_stream")
@@ -653,9 +804,9 @@ def setup_omezarr(app, config):
 
     # Decorating neuro_glancer_entry to allow caching ##
     # if config.cache is not None:
-    #     print('Caching setup')
+    #     logger.info('Caching setup')
     #     omezarr_entry = config.cache.memoize()(omezarr_entry)
-    #     print(omezarr_entry)
+    #     logger.info(omezarr_entry)
     # neuro_glancer_entry = login_required(neuro_glancer_entry)
 
     omezarr_entry = cross_origin(allow_headers=['Content-Type'])(omezarr_entry)
@@ -754,7 +905,7 @@ Single channel, multiscale, EM:
 #         range(chunk_range[4])
 #         ):
 #     tmp = chunk_template.format(t,c,z,y,x)
-#     print(tmp)
+#     logger.info(tmp)
 #     chunks_list.append(tmp)
     
 

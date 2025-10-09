@@ -18,12 +18,12 @@ Flask limiter:
     https://flask-limiter.readthedocs.io/en/latest/
 '''
 
-import time
 from flask import (render_template, 
                    request, 
                    flash, 
                    redirect, 
-                   url_for)
+                   url_for,
+                   abort)
 
 from flask_login import (LoginManager, 
                          login_user, 
@@ -33,6 +33,14 @@ from flask_login import (LoginManager,
                          logout_user)
 
 def user_info():
+    """
+    Retrieve information about the currently logged-in user.
+
+    Returns:
+        dict: A dictionary containing the following keys:
+              - 'is_authenticated': Whether the user is authenticated (bool).
+              - 'id': The user's ID if authenticated, otherwise None.
+    """
     return {'is_authenticated':current_user.is_authenticated, 'id':current_user.id if current_user.is_authenticated else None}
 
 class User(UserMixin):
@@ -40,8 +48,23 @@ class User(UserMixin):
         self.id = username
 
 def setup_auth(app):
+    """
+    Set up user authentication and session management for the Flask application.
+
+    Configures:
+    - Secure session cookies.
+    - Login manager for managing user sessions.
+    - Rate limiter to prevent brute force login attempts.
+    - Routes for login, logout, and profile pages.
+
+    Args:
+        app (Flask): The Flask application instance.
+
+    Returns:
+        tuple: A tuple containing the modified Flask app and the LoginManager instance.
+    """
     ## This import must remain here else circular import error
-    from BrAinPI import settings
+    from brain_api_main import settings
     from flask_limiter import Limiter
     from flask_limiter.util import get_remote_address
     
@@ -105,11 +128,11 @@ def setup_auth(app):
         remote_ip = request.remote_addr #<--Potential to log attempts and restrict number of tries
         username = request.form.get('username')
         password = request.form.get('password')
-        remember = True if request.form.get('remember') else False
-        
+        #remember = True if request.form.get('remember') else False
+        remember = True
         ## Check user against domain server
         user = False # Default to False for security
-        if 'auth' in settings and settings.getboolean('auth','bypass_auth') == False:
+        if 'auth' in settings and not settings.getboolean('auth','bypass_auth'):
             user = domain_auth(username,
                                password,
                                domain_server=r"ldap://{}:{}".format(
@@ -136,7 +159,7 @@ def setup_auth(app):
         # if the above check passes, then we know the user has the right credentials
         login_user(load_user(username), remember=remember)  
         print('Got to here')
-        return redirect(url_for('profile'))
+        return redirect(url_for('browse_fs'))
     
     
     
@@ -166,17 +189,93 @@ def setup_auth(app):
     return app,login_manager
 
 
+def setup_NO_auth(app):
+    """
+    Set up a Flask application with disabled authentication.
+
+    This function disables all login routes and returns 404 errors for any login-related requests.
+
+    Args:
+        app (Flask): The Flask application instance.
+
+    Returns:
+        tuple: A tuple containing the modified Flask app and the LoginManager instance.
+    """
+    ## This import must remain here else circular import error
+    from brain_api_main import settings
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+
+    app.config['SESSION_COOKIE_SECURE'] = True
+
+    ############################################################
+    # Configure login manager
+    ############################################################
+    login_manager = LoginManager(app)
+    login_manager.login_view = 'login'
+
+    # login_manager.init_app(app)
+
+    @login_manager.user_loader
+    def load_user(user_id):
+        abort(404)
+
+    ##########################################################
+    # Configure login rate limiter
+    ##########################################################
+
+    # limiter = Limiter(app, key_func=get_remote_address)
+    ##TODO Rate limiter needs to be in place where all workers can access
+    # https://flask-limiter.readthedocs.io/en/stable/configuration.html#RATELIMIT_STORAGE_URI
+    limiter = Limiter(get_remote_address, app=app, storage_uri="memory://")
+
+    @app.errorhandler(429)
+    def ratelimit_handler(e):
+        flash("Login ratelimit exceeded %s" % e.description)
+        return abort(404)
+
+    ##########################################################
+    # Abort all login routes
+    ##########################################################
 
 
+    @app.route('/login')
+    def login():
+        abort(404)
+
+    @app.route('/login', methods=['POST'])
+    # @limiter.limit(settings.get('auth', 'login_limit'))
+    def login_post():
+        abort(404)
+
+    @app.route('/profile')
+    # @login_required
+    def profile():
+        abort(404)
+
+    @app.route('/logout')
+    def logout():
+        return abort(404)
+
+    return app, login_manager
 
 
-def domain_auth(user_name,password,domain_server=r"ldap://cbilab.pitt.edu:389",domain="cbilab"):
-    '''
+def domain_auth(user_name,password,domain_server=r"ldap://localhost:389",domain="mydomain"):
+    """
     Attempts a simple verification of user account on windows domain server
-    Return True if auth succeeded
-    Return False if auth was rejected
-    Return None if an error occured
-    '''
+
+    Args:
+        user_name (str): The username to authenticate.
+        password (str): The user's password.
+        domain_server (str, optional): The domain server's address (LDAP URI). Defaults to 'ldap://localhost:389'.
+        domain (str, optional): The domain name. Defaults to "mydomain".
+
+    Returns:
+        bool or None:
+            - True if authentication succeeds.
+            - False if authentication fails.
+            - None if an error occurs during the connection.
+    """
  
     from ldap3 import Server, Connection, ALL, NTLM
     

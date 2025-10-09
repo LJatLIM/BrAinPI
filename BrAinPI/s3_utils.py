@@ -1,0 +1,688 @@
+import os
+import time
+import functools
+
+import boto3
+import datetime
+import botocore
+from botocore import UNSIGNED, exceptions
+from botocore.client import Config
+from io import BytesIO
+
+from zarr._storage.store import Store
+
+from cache_tools import get_cache
+cache_disk = get_cache()
+# # cache_ram = cache_head_space(10)
+# # cache_ram = None
+
+
+def get_ttl_hash(hours=24):
+    """
+    Return the same value withing `hours` time period
+    """
+    seconds = hours * 60 * 60
+    return round(time.time() / seconds)
+
+
+client = boto3.client('s3', config=Config(signature_version=UNSIGNED))
+paginator = client.get_paginator('list_objects_v2')
+
+
+def s3_catch_exceptions_retry(func):
+    """
+    Decorator that catches SSLError exceptions from boto3 S3 operations and retries up to 4 times.
+
+    If an SSLError is raised, it will print the error and try again. After 4 failed attempts,
+    the exception will be raised.
+
+    Parameters:
+        func (callable): The function to decorate.
+
+    Returns:
+        callable: The wrapped function with retry capability.
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        tries = 0
+        try:
+            return func(*args, **kwargs)
+        except botocore.exceptions.SSLError as e:
+            print(e)
+            tries += 1
+            if tries == 4:
+                raise(e)
+
+    return wrapper
+
+
+# @brainpi_cache_ram.memoize
+# @cache_disk.memoize()
+# @s3_catch_exceptions_retry
+def s3_get_dir_contents(path, recursive=False):
+    """
+    Retrieve the directory contents of an S3 bucket path.
+
+    This function uses a paginator to list objects and common prefixes (directories)
+    under a specified S3 path. It returns a tuple containing:
+        - root (str): The root path without the bucket name.
+        - dirs (tuple): A tuple of directory names.
+        - files (tuple): A tuple of file keys.
+        - files_sizes (tuple): A tuple of file sizes.
+        - files_modified (tuple): A tuple of file last modification timestamps (as datetime objects).
+
+    The function supports recursive listing as well as listing with a delimiter.
+
+    Parameters:
+        path (str): The S3 path in the form 'bucket/path/to/directory'.
+        recursive (bool): If True, list contents recursively. Otherwise, list only immediate children.
+
+    Returns:
+        tuple: (root, dirs, files, files_sizes, files_modified)
+    """
+    # if not ( 'cache_disk' in locals() or 'cache_disk' in globals() ):
+    #     cache_disk = False
+    # if not ( 'cache_ram' in locals() or 'cache_ram' in globals() ):
+    #     cache_ram = False
+
+    # print(f'CACHE STATUS = {cache_disk} {cache_ram}')
+    #Get from diskcache if exists
+    # if cache_disk is not None or cache_ram is not None:
+    #     key = f's3_get_dir_contents_{path}{str(recursive)}'
+    #
+    #     if cache_ram is not None:
+    #         # Try RAM Cache
+    #         out = cache_ram[key]
+    #         if out is not None:
+    #             return out
+    #
+    #     if cache_disk is not None:
+    #         # Try diskcache
+    #         out = cache_disk.get(key)
+    #         if out is not None:
+    #             if cache_ram is not None:
+    #                 cache_ram[key] = out
+    #             print('GOT FROM CACHE')
+    #             return out
+
+    bucket, path_split = s3_get_bucket_and_path_parts(path)
+    # print(bucket)
+    if len(path_split) > 1:
+        prefix = '/'.join(path_split[1:]) + '/'  # Make sure you provide / in the end
+        root = f'{bucket}/{prefix}'
+    else:
+        prefix = ''  # Root prefix
+        root = f'{bucket}'
+    # client = boto3.client('s3', config=Config(signature_version=UNSIGNED))
+    # paginator = client.get_paginator('list_objects_v2')
+    if recursive:
+        pages = paginator.paginate(Bucket=bucket, MaxKeys=1000)
+    else:
+        pages = paginator.paginate(Bucket=bucket, MaxKeys=1000, Prefix=prefix, Delimiter='/')
+    dirs = ()
+    files = ()
+    files_sizes = ()
+    files_modified = ()
+    current_page = 0
+    for page in pages:
+        current_page += 1
+        print(f'Page {current_page} {path}')
+        if 'CommonPrefixes' in page:
+            dirs += tuple((x.get('Prefix')[:-1] for x in page.get('CommonPrefixes')))
+        if 'Contents' in page:
+            files += tuple((x.get('Key') for x in page.get('Contents')))
+            files_sizes += tuple((x.get('Size') for x in page.get('Contents')))
+            files_modified += tuple((x.get('LastModified') for x in page.get('Contents')))  # datetime objects
+    r = root.replace(bucket + '/', '')
+    dirs = tuple((x.replace(r, '') for x in dirs))
+    files = tuple((x.replace(r, '') for x in files))
+    out = root, dirs, files, files_sizes, files_modified
+
+    # if cache_disk is not None or cache_ram is not None:
+    #     print('SENT TO CACHE')
+    #     if cache_ram is not None:
+    #         cache_ram[key] = out
+    #     if cache_disk is not None:
+    #         cache_disk.set(key, out, expire=3600, tag='S3')  # Expire after day 86400
+
+    return out
+
+# Setup caching and error catching decorators
+s3_get_dir_contents = s3_catch_exceptions_retry(s3_get_dir_contents)
+if cache_disk is not None:
+    s3_get_dir_contents = cache_disk.memoize()(s3_get_dir_contents)
+s3_get_dir_contents = brainpi_cache_ram.memoize(s3_get_dir_contents)
+
+def s3_get_bucket_and_path_parts(path):
+    """
+    Split an S3 path into the bucket and its path components.
+
+    The path is cleaned before splitting.
+
+    Parameters:
+        path (str): The S3 path (e.g., "s3://bucket/path/to/object" or "/bucket/path/to/object").
+
+    Returns:
+        tuple: A tuple (bucket, path_split) where bucket is the bucket name and path_split is a list of the path components.
+    """
+    path = s3_clean_path(path)
+    path_split = path.split('/')
+    # print(path_split)
+    if isinstance(path_split, str):
+        path_split = [path_split]
+    bucket = path_split[0]
+    return bucket, path_split
+
+
+def s3_clean_path(path):
+    """
+    Clean an S3 path by removing protocol prefixes and trailing slashes.
+
+    Parameters:
+        path (str): The original S3 path.
+
+    Returns:
+        str: The cleaned S3 path.
+    """
+    if 's3://' in path.lower():
+        path = path[5:]
+    elif path.startswith('/'):
+        path = path[1:]
+    if path.endswith('/'):
+        path = path[:-1]
+    return path
+
+
+def s3_path_split(path):
+    """
+    Split an S3 path into directory and file components.
+
+    Parameters:
+        path (str): The S3 path.
+
+    Returns:
+        tuple: A tuple (directory, file) where directory is the parent directory and file is the file or last segment.
+    """
+    path = s3_clean_path(path)
+    p, f = os.path.split(path)
+    if p == '':
+        return f, p
+    else:
+        return p, f
+
+
+
+def s3_isfile(path):
+    """
+    Check if a given S3 path corresponds to a file.
+
+    Parameters:
+        path (str): The S3 path to check.
+
+    Returns:
+        bool: True if the path is a file, False otherwise.
+    """
+    # print(path)
+    p, f = s3_path_split(path)
+    _, _, files, _, _ = s3_get_dir_contents(p)
+    # print(f in files)
+    # print(f'''
+    # ##########################################
+    # ISFILE {f in files}
+    # #########################################
+    # ''')
+    return f in files
+
+
+
+def s3_isdir(path):
+    """
+    Check if a given S3 path corresponds to a directory.
+
+    Parameters:
+        path (str): The S3 path to check.
+
+    Returns:
+        bool: True if the path is a directory, False otherwise.
+    """
+    # print(path)
+    p, f = s3_path_split(path)
+    if f == '':
+        return True
+    _, dirs, _, _, _ = s3_get_dir_contents(p)
+    # print(f in dirs)
+    # print(f'''
+    # ##########################################
+    # ISDIR {f in dirs}
+    # #########################################
+    # ''')
+    return f in dirs
+
+def s3_exists(path):
+    """
+    Check if a given S3 path exists either as a file or a directory.
+
+    Parameters:
+        path (str): The S3 path to check.
+
+    Returns:
+        bool: True if the path exists, False otherwise.
+    """
+    return s3_isfile(path) or s3_isdir(path)
+
+def get_file_size(path):
+    """
+    Retrieve the size of a file at the specified S3 path.
+
+    Parameters:
+        path (str): The S3 file path.
+
+    Returns:
+        int: The file size in bytes if the file exists; otherwise, 0.
+    """
+    if s3_isfile(path):
+        p, f = s3_path_split(path)
+        parent, _, files, files_sizes, _ = s3_get_dir_contents(p)
+        idx = files.index(f)
+        return files_sizes[idx]
+    else:
+        return 0
+
+
+def get_mod_time(path):
+    """
+    Retrieve the last modification time for a file at the given S3 path.
+
+    Parameters:
+        path (str): The S3 file path.
+
+    Returns:
+        datetime: The last modified time of the file, or the current time if the file does not exist.
+    """
+    if s3_isfile(path):
+        p, f = s3_path_split(path)
+        parent, _, files, _, files_modified = s3_get_dir_contents(p)
+        idx = files.index(f)
+        return files_modified[idx]
+    else:
+        # Default to returning the current date and time if it is a directory since s3 attaches these
+        # parameters to a key and a 'directory' is simply a part of potentially many keys
+        return datetime.datetime.now()
+
+
+
+def num_dirs_files(path):
+    """
+    Count the number of directories and files at a given S3 path.
+
+    Parameters:
+        path (str): The S3 path.
+
+    Returns:
+        tuple: A tuple (num_dirs, num_files) representing the number of subdirectories and files, respectively.
+    """
+    _, dirs, files = s3_get_dir_contents(path)
+    return len(dirs), len(files)
+
+
+
+@s3_catch_exceptions_retry
+def s3_download_file_to_object(filepath, boto3_client):
+    """
+    Download an S3 file and return its contents as a byte string.
+
+    Parameters:
+        filepath (str): The S3 file path.
+        boto3_client (boto3.client): The boto3 client to use for the download.
+
+    Returns:
+        bytes: The contents of the downloaded file.
+    """
+    bucket, _ = s3_get_bucket_and_path_parts(filepath)
+    object_name = filepath.replace(bucket + '/', '')
+    with BytesIO() as f:
+        boto3_client.download_fileobj(bucket, object_name, f)
+        return f.getvalue()
+
+
+
+#############################################################################
+## ZARR READ ONLY STORE BASED ON BOTO3
+## NEEDED to get around s3fs async causing issues with gevent workers
+#############################################################################
+
+class s3_boto_store(Store):
+    """
+    A read-only Zarr store backed by Amazon S3 using boto3.
+
+    This class implements the Zarr store interface for reading data directly from S3.
+    It supports only read operations and assumes anonymous access to S3.
+
+    Attributes:
+        path (str): The full S3 path used to initialize the store.
+        raw_path (str): The raw S3 path before processing.
+        bucket (str): The S3 bucket name.
+        zarr_dir (str): The directory within the bucket containing the Zarr data.
+        normalize_keys (bool): If True, all keys are normalized to lowercase.
+        _dimension_separator (str): The dimension separator to use (only '/' is supported).
+        mode (str): Operating mode. Only 'r' (read) is supported.
+        client (boto3.client): A boto3 client for S3 with anonymous configuration.
+        paginator: A paginator for listing objects in the bucket.
+    """
+
+    def __init__(self, path, normalize_keys=False, dimension_separator='/', s3_cred='anon', mode='r'):
+        """
+        Initialize the s3_boto_store.
+
+        Parameters:
+            path (str): The S3 path to the Zarr store (e.g., "bucket/path/to/zarr").
+            normalize_keys (bool): Whether to convert keys to lowercase (default False).
+            dimension_separator (str): The dimension separator (only '/' is supported).
+            s3_cred (str): Credentials type. Only 'anon' (anonymous) is supported.
+            mode (str): Mode of operation. Must be 'r' for read-only.
+        """
+        self.path = path
+        self.raw_path = path
+        self.bucket, path_split = s3_get_bucket_and_path_parts(self.raw_path)
+        if len(path_split) > 1:
+            self.zarr_dir = '/'.join(path_split[1:])
+        else:
+            self.zarr_dir = ''
+
+        # if os.path.exists(path) and not os.path.isdir(path):
+        #     raise FSPathExistNotDir(path)
+
+        self.normalize_keys = normalize_keys
+        if dimension_separator is None:
+            dimension_separator = "/"
+        elif dimension_separator != "/":
+            raise ValueError(
+                "s3_boto_store only supports '/' as dimension_separator")
+        self._dimension_separator = dimension_separator
+        self.mode = mode
+        assert self.mode == 'r', "s3_boto_store only supports read_only mode (mode='r')"
+
+        # Form client
+        assert s3_cred.lower() == 'anon', 'Currently only anonymous connections to s3 are supported'
+        self.client = boto3.client('s3', config=Config(signature_version=UNSIGNED))
+        self.paginator = self.client.get_paginator('list_objects_v2')
+
+        # from cache_tools import get_cache
+        # Received from outside class to reduce errors on opening too many instances
+        # Need a way to handle this better
+        # self.cache = cache
+
+    def __hash__(self):
+        """
+        Compute a hash for the store based on its raw_path, bucket, and zarr_dir.
+
+        Returns:
+            int: The computed hash.
+        """
+        return hash(
+            f'{self.raw_path}{self.bucket}{self.zarr_dir}'
+        )
+
+    def __getstate__(self):
+        """
+        Get the state of the store for serialization.
+
+        Returns:
+            tuple: A tuple representing the state.
+        """
+        return (self.raw_path, self.bucket, self.zarr_dir, self.normalize_keys, self._dimension_separator,
+                self.mode)
+
+    def __setstate__(self, state):
+        """
+        Restore the state of the store from a serialized state.
+
+        Parameters:
+            state (tuple): The state tuple to restore.
+        """
+        (self.raw_path, self.bucket, self.zarr_dir, self.normalize_keys, self._dimension_separator,
+         self.mode) = state
+
+    def __del__(self):
+        """
+        Destructor for the store.
+        """
+        pass
+
+    def _normalize_key(self, key):
+        """
+        Normalize a key if normalization is enabled.
+
+        Parameters:
+            key (str): The key to normalize.
+
+        Returns:
+            str: The normalized key.
+        """
+        return key.lower() if self.normalize_keys else key
+
+    def get_full_path_from_key(self, key):
+        """
+        Construct the full S3 path from a given key.
+
+        Parameters:
+            key (str): The key within the Zarr store.
+
+        Returns:
+            str: The full S3 path (including bucket and directory).
+        """
+        if key[0] == '/':
+            return f'{self.bucket}/{self.zarr_dir}{key}'
+        return f'{self.bucket}/{self.zarr_dir}/{key}'
+
+    def __getitem__(self, key):
+        """
+        Retrieve an item from the Zarr store by key.
+
+        Parameters:
+            key (str): The key corresponding to the desired item.
+
+        Returns:
+            bytes: The content of the item.
+
+        Raises:
+            KeyError: If the key does not exist.
+        """
+        # print(f'GETTING {key}')
+        # print('In Get Item')
+        # key = self._normalize_key(key)
+
+        filepath = self.get_full_path_from_key(key)
+
+        # if cache_ram is not None:
+        #     cache_key = f's3_get_dir_contents__getitem__{filepath}'
+        #     out = cache_ram[cache_key]
+        #     if out is not None:
+        #         return out
+
+        if s3_isfile(filepath):
+            # print(f's3_isfile {filepath}')
+            try:
+                out = self._fromfile(filepath)
+                # if cache_ram is not None:
+                #     cache_ram[cache_key] = out
+                return out
+                # print(f's3_isfile RETURNED {a}')
+                # return a
+            except:
+                raise KeyError(key)
+        else:
+            raise KeyError(key)
+
+    def _fromfile(self, filepath):
+        """
+        Download and return the data from a specified S3 file.
+
+        Parameters:
+            filepath (str): The full S3 file path.
+
+        Returns:
+            bytes: The content of the file.
+        """
+        return s3_download_file_to_object(filepath, self.client)
+
+    def __setitem__(self, key, value):
+        """
+        Set an item in the store.
+
+        This operation is not supported in the read-only store.
+        """
+        pass
+
+    def __delitem__(self, key):
+        """
+        Delete an item from the store.
+
+        This operation is not supported in the read-only store.
+        """
+        pass
+
+    def __contains__(self, key):
+        """
+        Check if a given key exists in the Zarr store.
+
+        Parameters:
+            key (str): The key to check.
+
+        Returns:
+            bool: True if the key exists, False otherwise.
+        """
+        filepath = self.get_full_path_from_key(key)
+        print(f'__CONTAINS__ {filepath}')
+        if s3_isfile(filepath):
+            return True
+        return False
+
+    def __eq__(self, other):
+        """
+        Check for equality with another s3_boto_store.
+
+        Parameters:
+            other (s3_boto_store): Another instance to compare with.
+
+        Returns:
+            bool: True if both instances point to the same bucket and directory.
+        """
+        return isinstance(other, s3_boto_store) and \
+            self.bucket == other.bucket and \
+            self.zarr_dir == other.zarr_dir
+
+    def keys(self):
+        """
+        Yield keys from the store.
+
+        If the path exists locally, it iterates using os.walk.
+
+        Yields:
+            str: Each key found.
+        """
+        if os.path.exists(self.path):
+            yield from self._keys_fast()
+
+    def _keys_fast(self, walker=os.walk):
+        """
+        Fast iteration of keys using the file system.
+
+        Parameters:
+            walker (callable): Function to walk the directory structure (defaults to os.walk).
+
+        Yields:
+            str: Keys constructed from the file names.
+        """
+        for dirpath, _, filenames in walker(self.path):
+            dirpath = os.path.relpath(dirpath, self.path)
+            if dirpath == os.curdir:
+                for f in filenames:
+                    yield f
+            else:
+                # dirpath = dirpath.replace("\\", "/")
+                for f in filenames:
+                    basefile, ext = os.path.splitext(f)
+                    if ext == self.container_ext:
+                        names = self._get_zip_keys(os.path.join(self.path, dirpath, f))
+                        # Keys are stored in h5 with '.' separator, replace with appropriate separator
+                        names = (x.replace('.', os.path.sep) for x in tuple(names)[0])
+                        names = (os.path.sep.join((dirpath, basefile, x)) for x in names)
+                        yield from names
+                    # elif ext == '.tmp' and os.path.splitext(basefile)[-1] == self.container_ext:
+                    #     basefile, ext = os.path.splitext(basefile)
+                    #     names = self._get_zip_keys(f)
+                    #     names = ("/".join((dirpath, basefile,x)) for x in names)
+                    #     yield from names
+                    else:
+                        yield os.path.sep.join((dirpath, f))
+
+    def __iter__(self):
+        """
+        Return an iterator over keys.
+        """
+        return self.keys()
+
+    def __len__(self):
+        """
+        Return the number of keys in the store.
+        """
+        return sum(1 for _ in self.keys())
+
+    # @s3_catch_exceptions_retry
+    # @functools.lru_cache(maxsize=10000)
+    # def s3_get_dir_contents(self, path, recursive=False):
+    #     # Get from diskcache if exists
+    #     if self.cache is not None:
+    #         key = f's3_get_dir_contents_{path}{str(recursive)}'
+    #         out = cache_head_space.get(key)
+    #         if out is None:
+    #             out = self.cache.get(key)
+    #         if out is not None:
+    #             print('GOT FROM CACHE')
+    #             cache_head_space[key] = out
+    #             return out
+    #
+    #     print('INSIDE S#_GET_DIR_COTENTS')
+    #     bucket, path_split = s3_get_bucket_and_path_parts(path)
+    #     # print(bucket)
+    #     if len(path_split) > 1:
+    #         prefix = '/'.join(path_split[1:]) + '/'  # Make sure you provide / in the end
+    #         root = f'{bucket}/{prefix}'
+    #     else:
+    #         prefix = ''  # Root prefix
+    #         root = f'{bucket}'
+    #     # client = boto3.client('s3', config=Config(signature_version=UNSIGNED))
+    #     # paginator = client.get_paginator('list_objects_v2')
+    #     if recursive:
+    #         pages = self.paginator.paginate(Bucket=bucket, MaxKeys=1000)
+    #     else:
+    #         pages = self.paginator.paginate(Bucket=bucket, MaxKeys=1000, Prefix=prefix, Delimiter='/')
+    #
+    #     dirs = ()
+    #     files = ()
+    #     files_sizes = ()
+    #     files_modified = ()
+    #     for page in pages:
+    #         if 'CommonPrefixes' in page:
+    #             dirs += tuple([x.get('Prefix')[:-1] for x in page.get('CommonPrefixes')])
+    #         if 'Contents' in page:
+    #             files += tuple((x.get('Key') for x in page.get('Contents')))
+    #             files_sizes += tuple((x.get('Size') for x in page.get('Contents')))
+    #             files_modified += tuple((x.get('LastModified') for x in page.get('Contents')))  # datetime objects
+    #     r = root.replace(bucket + '/', '')
+    #     to_chop = len(r)
+    #     dirs = tuple((x[to_chop:] for x in dirs))
+    #     files = tuple((x[to_chop:] for x in files))
+    #     # dirs = tuple((x.replace(r, '') for x in dirs))
+    #     # files = tuple((x.replace(r, '') for x in files))
+    #     out = root, dirs, files, files_sizes, files_modified
+    #     if self.cache is not None:
+    #         try:
+    #             cache_head_space[key] = out
+    #         except:
+    #             pass
+    #         print('SENT TO CACHE')
+    #         self.cache.set(key, out, expire=3600, tag='S3')  # Expire after day 86400
+    #     return out
+    #     # return root, tuple(dirs), tuple(files), tuple(files_sizes), tuple(files_modified)

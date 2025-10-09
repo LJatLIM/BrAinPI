@@ -1,10 +1,14 @@
 import neuroglancer
 import urllib.request
-
+import signal
+from logger_tools import logger
 # Project specific imports
-import utils
+import config_tools
 def get_server():
-    settings = utils.get_config('settings.ini')
+    """
+    Lauch the neuroglancer server
+    """
+    settings = config_tools.get_config('settings.ini')
     ip = settings.get('neuroglancer','local_ip')
     port = settings.getint('neuroglancer','local_port')
     token = 'base'
@@ -28,7 +32,7 @@ def get_server():
             neuroglancer.set_server_bind_address(bind_address=ip, bind_port=port)
             viewer = neuroglancer.UnsynchronizedViewer(token='base')
             # viewer = neuroglancer.Viewer()
-            print(viewer)
+            logger.success(viewer)
             return viewer
         except OSError:
             del viewer
@@ -37,5 +41,13 @@ def get_server():
             del viewer
             return
 
+def keep_alive():
+    """
+    Wait for signals (Ctrl+C will exit)
+    """
+    signal.pause() 
+
 if __name__ == '__main__':
         viewer = get_server()
+        if viewer:
+            keep_alive()

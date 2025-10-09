@@ -1,6 +1,6 @@
 # BrAinPI
 
-BrAinPI, pronounced "Brain Pie", is a Flask-based API for serving a variety of multiscale imaging data for access over the web in standard file formats like ome-zarr and neuroglancer precomputed. BrAinPI provides a file browser interface that allows one to expose a file system with basic user and group management. The browser interface can be used for single click access to neuroglancer visualizations.  When multiscale chunked imaging file types are available (see "Compatible file types" below), BrAinPI can open the dataset in neuroglancer or provide links to various 'views' of the data structured as ome-zarr. The ome-zarr links are compatible with any application that support ome-zarr, including neuroglancer and napari.
+BrAinPI, pronounced "Brain Pie", is a Flask-based API for serving a variety of multiscale imaging data for access over the web in standard file formats like ome-zarr and neuroglancer precomputed. BrAinPI provides a file browser interface that allows one to expose a file system with basic user and group management. The browser interface can be used for single click access to neuroglancer/openseadragon visualizations.  When multiscale chunked imaging file types are available (see "Compatible file types" below), BrAinPI can open the dataset in neuroglancer/openseadragon or provide links to various 'views' of the data structured as ome-zarr. The ome-zarr links are compatible with any application that support ome-zarr, including neuroglancer and napari.
 
 
 
@@ -14,30 +14,40 @@ conda activate brainpi
 
 git clone https://github.com/CBI-PITT/BrAinPI.git
 pip install -e /path/to/cloned/repo/
+# Library glymur needs the native OpenJPEG library (libopenjp2) at compile/run-time.
+# If your OS does not have openjp2 lib. Using conda to install glymur for jp2 images, please try commands below.
+# pip uninstall glymur
+# conda install -c conda-forge glymur=0.13.6
 
 ## Before running BrAinPI
 
 '''
 Edit the settings_TEMPLATE.ini and groups_TEMPLATE.ini files and rename them to settings.ini and groups.ini.
+On limux machine, test the files allowed to be opened by ulimit -n. Increase it using ulimit -n 500000 if it's default 1024.
 '''
 
 ```
 
 
 
-## Running BrAinPI:
+## Running BrAinPI and Neuroglancer:
 
 ```bash
-#For development:
-python -i /path/to/cloned/repo/brainapi/BrAinPI.py
+# For development:
+# BrAinPI Start
+python /path/to/cloned/repo/brainapi/brain_api_main.py
+# Neuroglancer Start
+python /path/to/cloned/repo/brainapi/neuroglancer_server.py
 
-#In production:
+# In production:
+# BrAinPI Start
 gunicorn --worker-class gevent -b 0.0.0.0:5001 --chdir /path/to/cloned/repo/BrAinPI wsgi:app -w 24 --threads=2 --worker-connections=20
+# Neuroglancer Start
+python /path/to/cloned/repo/brainapi/neuroglancer_server.py
 ## Adjust these parameters according to your specific needs
 # -w = workers (suggest the number of logical CPUs)
 # -threads = threads per worker (suggest 2)
 # --worker-connections (suggest 5-20)
-
 ### We suggest running BrAinPI behind NGINX in a production environment.
 ```
 
@@ -53,8 +63,7 @@ http://localhost:5001:/browser
 
 # HTML links endpoint:
 # Returns a json with links to several versions of a dataset on disk
-http://localhost:5001:/path_to_html_options/?path=/path/to/physical/location/on/disk.ims
-http://localhost:5001:/path_to_html_options/?path=/path/to/physical/location/on/disk.ome.zarr
+http://localhost:5001/path_to_html_options/?path=/path/to/physical/location/on/disk
 ```
 
 
@@ -68,7 +77,10 @@ Inputs:
 | Imaris        | [Library used to read .ims](https://github.com/CBI-PITT/imaris_ims_file_reader)<br />[IMS file structure](https://imaris.oxinst.com/support/imaris-file-format)<br />[Bitplane Imaris](https://imaris.oxinst.com/) | BrAinPI can read multiscale image data but not annotation information |
 | OME-Zarr      | [OME-NGFF Spec](https://ngff.openmicroscopy.org/latest/)<br />[Histochemistry Paper](https://link.springer.com/article/10.1007/s00418-023-02209-1) | BrAinPI can read data in ome-zarr following zarr v2 specification |
 | OME-Zarr-like | [Alternative Zarr Stores](https://github.com/CBI-PITT/zarr_stores) | BrAinPI can read datasets structured like OME-Zarr but not conforming strictly to the OME-NGFF specification. Currently supported are datasets written in alternative zarr storage classes (supported: H5_Nested_Store) |
-
+| Tif/Ome.tif   | [Library used to read and write](https://github.com/cgohlke/tifffile)|Corresponding Pyrimids Images will be genrated if the original does not have pyrimid structures|
+| Terafly       | [Library used to read](https://github.com/SEU-ALLEN-codebase/v3d-py-helper) |Terafly format file does not have fixed extension, please add .terafly to the end of parent folder name
+| Jp2           | [Library used to read](https://github.com/quintusdias/glymur) | glymur requires openjpeg pre-installed on your system and in the standard location if using pip to install the project. You can install it using conda to avoid this if you do not have administator rights. 1. pip uninstall glymur 2. conda install -c conda-forge glymur
+| Nii/Nii.gz/Nii.zarr| [Library used to read](https://github.com/neuroscales/nifti-zarr) | It's still under activaly development.
 
 
 Outputs:
@@ -83,11 +95,11 @@ Outputs:
 
 ## "File Browser:
 
-A file browsing interface is availabe in BrAinPI at the "/browser" endpoint. At the root of the file browser, paths registered with BrAinPI appear according to their assigned names.  Paths exposed for anonymous visitors to BrAinPI can be made under [dir_anon].  Paths that should only be seen by authenticated users can be registed via [dir_auth]. 
+A file browsing interface is availabe in BrAinPI at the "/browser" endpoint. At the root of the file browser, paths registered with BrAinPI appear according to their assigned names.  Paths exposed for anonymous visitors to BrAinPI can be made under [dir_anon].  Paths that should only be seen by authenticated users can be registered via [dir_auth]. 
 
 
 
-NOTE: Although paths are not exposed and browseable when registed with [dir_auth], links generated against files in these paths can be viewed by anyone.
+NOTE: Although paths are not exposed and browseable when registered with [dir_auth], links generated against files in these paths can be viewed by anyone.
 
 NOTE: Currently LDAP authentication can be configured only for windows active directory.
 
@@ -99,6 +111,7 @@ In the examples below, the root of the browser path by anonymous browsers would 
 # settings.ini
 [dir_anon]
 my_fav_location = /path/to
+open_s3_bucket = s3://bucket_name
 
 [dir_auth]
 another_place = /another
@@ -108,19 +121,22 @@ another_place = /another
 
 ## "path_to_html_options" endpoint:
 
-This endpoint makes it easy to retrieve links to several views of a compatible file type.  For this to work, the settings.ini file must have a path registered that you wish to exponse to BrAinPI in either the [dir_anon] or [dir_auth] fields. The user then passes the full file path to the endpoint to determine if BrAinPI is capable of translating the dataset. A json file is returned with several entries described in the table below. Null values indicate that BrAinPI is not able to generate a link for that dataset - or the path does not exist.
+This endpoint makes it easy to retrieve links to several views of a compatible file type.  For this to work, the settings.ini file must have a path registered that you wish to expose to BrAinPI in either the [dir_anon] or [dir_auth] fields. The user then passes the full file path to the endpoint to determine if BrAinPI is capable of translating the dataset. A json file is returned with several entries described in the table below. Null values indicate that BrAinPI is not able to generate a link for that dataset - or the path does not exist.
 
 <u>Examples for how to structure a request (see setting.ini above):</u>
 
 http://localhost:5001/path_to_html_options/?path=/path/to/physical/location/on/disk.ims<br/>
-http://localhost:5001/path_to_html_options/?path=/another/path/to/a/different/physical/location/on/disk.ome.zarr
-
+http://localhost:5001/path_to_html_options/?path=/another/path/to/a/different/physical/location/on/disk.ome.zarr<br/>
+http://localhost:5001/path_to_html_options/?path=/another/path/to/a/different/physical/location/on/disk.ome.tif<br/>
+http://localhost:5001/path_to_html_options/?path=/another/path/to/a/different/physical/location/on/disk.tif<br/>
+http://localhost:5001/path_to_html_options/?path=/another/path/to/a/different/physical/location/on/disk.terafly<br/>
+http://localhost:5001/path_to_html_options/?path=/another/path/to/a/different/physical/location/on/disk.jp2<br/>
 
 
 #### Links Returned by the "path_to_html_options"
 
-| JSON Key                                      | Link                                                         |
-| --------------------------------------------- | :----------------------------------------------------------- |
+| JSON Key                                      | Link                                                        |
+| --------------------------------------------- | ----------------------------------------------------------- |
 | neuroglancer                                  | Link to open a neuroglancer visualization of the dataset.  This endpoint will also deliver neuroglancer precomputed format |
 | neuroglancer_metadata                         | 'info' file for neuroglancer precomputed format             |
 | omezarr                                       | ome-zarr view of the data                                   |
@@ -133,6 +149,8 @@ http://localhost:5001/path_to_html_options/?path=/another/path/to/a/different/ph
 | omezarr_neuroglancer_optimized_validator      | ome-ngff validator link for the omezarr_neuroglancer_optimized url |
 | omezarr_8bit_neuroglancer_optimized           | ome-zarr view of the data where data is chunked along the channel dimension to provide enhanced compatibility with neuroglancer and returned in a 8bit data type |
 | omezarr_8bit_neuroglancer_optimized_validator | ome-ngff validator link for the omezarr_8bit_neuroglancer_optimized url |
+| openseadragon                                 | Link to open a openseadragon visualization of the dataset.  This endpoint will also deliver PNG format |
+| openseadragon_metadata                        | metadata info for supported format |
 | path                                          | the path passed to the endpoint                              |
 
 
