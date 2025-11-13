@@ -158,7 +158,28 @@ def ng_shader(numpy_like_object):
             # Expect HEX RGB
             colors.append("#" + omero["channels"][idx]["color"].upper())
     else:
-        defaultColors = ["green", "red", "purple", "blue", "yellow", "orange"]
+        defaultColors = [
+                "#00FF00",  # 0 green
+                "#FF0000",  # 1 red
+                "#800080",  # 2 purple
+                "#0000FF",  # 3 blue
+                "#FFFF00",  # 4 yellow
+                "#FFA500",  # 5 orange
+                "#00FFFF",  # 6 cyan
+                "#FF00FF",  # 7 magenta
+                "#32CD32",  # 8 lime green
+                "#FF1493",  # 9 deep pink
+                "#00BFFF",  # 10 deep sky blue
+                "#FFD700",  # 11 gold
+                "#7FFF00",  # 12 chartreuse
+                "#1E90FF",  # 13 dodger blue
+                "#D2691E",  # 14 chocolate
+                "#20B2AA",  # 15 light sea green
+                "#BA55D3",  # 16 medium orchid
+                "#6A5ACD",  # 17 slate blue
+                "#FF6347",  # 18 tomato
+                "#008080",  # 19 teal
+            ]
         for idx in range(metadata["Channels"]):
             labels.append(f"channel{idx}")
             colors.append(defaultColors[idx % len(defaultColors)])
