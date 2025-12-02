@@ -142,8 +142,10 @@ def ng_shader(numpy_like_object):
             elif str(numpy_like_object.dtype).startswith("float"):
                 windowMaxs.append(lowestResVolume.max())
                 # windowMaxs.append(1)
-        if metadata["Channels"] > 7:
-            break
+        # if metadata["Channels"] > 7:
+        #     break
+        if ii == 6:
+            break   
     labels = []
     colors = []
     if omero:
@@ -184,9 +186,10 @@ def ng_shader(numpy_like_object):
         for idx in range(metadata["Channels"]):
             labels.append(f"channel{idx}")
             colors.append(defaultColors[idx % len(defaultColors)])
-            if metadata["Channels"] > 7:
+            # if metadata["Channels"] > 7:
+            #     break
+            if idx == 6:
                 break
-
     shaderStr = ""
     # shaderStr = shaderStr + '// Init for each channel:\n\n'
     # shaderStr = shaderStr + '// Channel visability check boxes\n'
@@ -196,7 +199,9 @@ def ng_shader(numpy_like_object):
             shaderStr
             + f"#uicontrol bool {labels[idx]}_visable checkbox(default={str(isVisable[idx]).lower()});\n"
         )
-        if metadata["Channels"] > 7:
+        # if metadata["Channels"] > 7:
+        #     break
+        if idx == 6:
             break
     shaderStr = shaderStr + "\n"
 
@@ -215,7 +220,9 @@ def ng_shader(numpy_like_object):
             + f"#uicontrol float {labels[idx]}_gamma slider(min=0, max=5, step=0.01, default=1)"
         )
         shaderStr = shaderStr + ";\n"
-        if metadata["Channels"] > 7:
+        # if metadata["Channels"] > 7:
+        #     break
+        if idx == 6:
             break
 
     shaderStr = shaderStr + "\n"
@@ -226,7 +233,9 @@ def ng_shader(numpy_like_object):
             shaderStr
             + f'#uicontrol vec3 {labels[idx]}_color color(default="{colors[idx]}");\n'
         )
-        if metadata["Channels"] > 7:
+        # if metadata["Channels"] > 7:
+        #     break
+        if idx == 6:
             break
 
     shaderStr = shaderStr + "\n"
@@ -234,7 +243,9 @@ def ng_shader(numpy_like_object):
 
     for idx in range(metadata["Channels"]):
         shaderStr = shaderStr + f"vec3 {labels[idx]} = vec3(0);\n"
-        if metadata["Channels"] > 7:
+        # if metadata["Channels"] > 7:
+        #     break
+        if idx == 6:
             break
 
     shaderStr = shaderStr + "\n\nvoid main() {\n\n"
@@ -247,13 +258,17 @@ def ng_shader(numpy_like_object):
             shaderStr
             + f"{labels[idx]} = pow({labels[idx]}_color *  {labels[idx]}_lut(), vec3({labels[idx]}_gamma));\n\n"
         )
-        if metadata["Channels"] > 7:
+        # if metadata["Channels"] > 7:
+        #     break
+        if idx == 6:
             break
     # shaderStr = shaderStr + '// Add RGB values of all channels\n'
     shaderStr = shaderStr + "vec3 rgb = ("
     for idx in range(metadata["Channels"]):
         shaderStr = shaderStr + f"{labels[idx]}"
-        if metadata["Channels"] > 7:
+        # if metadata["Channels"] > 7:
+        #     break
+        if idx == 6:
             break
         if idx < metadata["Channels"] - 1:
             shaderStr = shaderStr + " + "
