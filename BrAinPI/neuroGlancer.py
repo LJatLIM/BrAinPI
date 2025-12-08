@@ -118,28 +118,31 @@ def ng_shader(numpy_like_object):
                 # channelMaxs.append(numpy_like_object.metadata[0,0,ii,'max'])
             except:
                 lowestResVolume = numpy_like_object[res - 1, 0, ii, :, :, :]
+                # print(f"resol {res - 1}, channel {ii}, dtype {numpy_like_object.dtype},shape {lowestResVolume.shape}")
                 lowestResVolume = lowestResVolume[lowestResVolume > 0]
+                # print(f"resol {res - 1}, channel {ii}, dtype {numpy_like_object.dtype},shape {lowestResVolume.shape}")
                 channelMins.append(lowestResVolume.min())
                 channelMaxs.append(lowestResVolume.max())
                 isVisable.append(True)
             windowMins.append(0)
-            if numpy_like_object.dtype == "uint16":
+            dtype = str(numpy_like_object.dtype)
+            if dtype == "uint16" or dtype.endswith("u2"):
                 windowMaxs.append(65535)
-            elif numpy_like_object.dtype == "uint8":
+            elif dtype == "uint8" or dtype.endswith("u1"):
                 windowMaxs.append(255)
-            elif numpy_like_object.dtype == "int16":
+            elif dtype == "int16" or dtype.endswith("i2"):
                 windowMaxs.append(32767)
-            elif numpy_like_object.dtype == "int8":
+            elif dtype == "int8" or dtype.endswith("i1"):
                 windowMaxs.append(127)
-            elif numpy_like_object.dtype == "int32":
+            elif dtype == "int32" or dtype.endswith("i4"):
                 windowMaxs.append(2147483647)
-            elif numpy_like_object.dtype == "uint32":
+            elif dtype == "uint32" or dtype.endswith("u4"):
                 windowMaxs.append(4294967295)
-            elif numpy_like_object.dtype == "uint64": 
-                windowMaxs.append(18446744073709551615)
-            elif numpy_like_object.dtype == "int64":
-                windowMaxs.append(9223372036854775807)
-            elif str(numpy_like_object.dtype).startswith("float"):
+            # elif dtype == "uint64" or dtype.endswith("u8"): 
+            #     windowMaxs.append(18446744073709551615)
+            # elif dtype == "int64" or dtype.endswith("i8"):
+            #     windowMaxs.append(9223372036854775807)
+            elif dtype.startswith("float"):
                 windowMaxs.append(lowestResVolume.max())
                 # windowMaxs.append(1)
         # if metadata["Channels"] > 7:
@@ -164,8 +167,8 @@ def ng_shader(numpy_like_object):
         defaultColors = [
                 "#00FF00",  # 0 green
                 "#FF0000",  # 1 red
-                "#800080",  # 2 purple
-                "#0000FF",  # 3 blue
+                "#0000FF",  # 2 blue
+                "#800080",  # 3 purple
                 "#FFFF00",  # 4 yellow
                 "#FFA500",  # 5 orange
                 "#00FFFF",  # 6 cyan
@@ -306,15 +309,24 @@ def ng_json(numpy_like_object, file=None, different_chunks=False):
     neuro_info = {}
     
     dtype = metadata["dtype"]
-    # handle nifit files which havae float 16/64
-    # if dtype == "int8":
-    #     dtype = "uint8"
-    # elif dtype == "int16":
-    #     dtype = "uint16"
-    # elif dtype == "float64" or dtype == "float16":
-    #     dtype = "float32"
     if dtype == "float16" or dtype == "float64":
         dtype = "float32"
+    elif dtype.endswith("u2"):
+        dtype = "uint16"
+    elif dtype.endswith("i2"):
+        dtype = "int16"
+    elif dtype.endswith("u1"):
+        dtype = "uint8"
+    elif dtype.endswith("i1"):
+        dtype = "int8"
+    elif dtype.endswith("i4"):
+        dtype = "int32"
+    elif dtype.endswith("u4"):
+        dtype = "uint32"
+    # elif dtype.endswith("u8"):
+    #     dtype = "uint64"
+    # elif dtype.endswith("i8"):
+    #     dtype = "int64"
     neuro_info["data_type"] = dtype
     neuro_info["num_channels"] = 3 if metadata["ndim"] == 6 else metadata["Channels"]
 
@@ -748,6 +760,42 @@ def setup_neuroglancer(app, config):
                     config.opendata[datapath_key], request.path, config=config
                 )
                 # redirect.html URLs are not necessary, but they facilitate the inclusion of gtag for google analytics
+                return render_template(
+                    "redirect.html",
+                    gtag=config.settings.get("GA4", "gtag"),
+                    redirect_url=link_to_ng,
+                    redirect_name="Neuroglancer",
+                    description=datapath,
+                )
+                # return redirect(link_to_ng) # Redirect browser to fully formed neuroglancer link
+            except Exception as e:
+                logger.error(f'{datapath}: {e}')
+                return render_template(
+                    "file_exception.html",
+                    gtag=config.settings.get("GA4", "gtag"),
+                    exception=e,
+                )
+        elif path_split[-1].endswith("json"):
+            view_path = request.path + "/ng_state_view"
+            file_name = datapath.split("/")[-1]
+            return render_template(
+                "file_loading.html",
+                # gtag=config.settings.get("GA4", "gtag"),
+                redirect_url=view_path,
+                redirect_name="Neuroglancer",
+                description=datapath,
+                file_name=file_name,
+            )
+        elif path_split[-1].endswith("ng_state_view"):
+            try:
+                path_split = tuple(part for part in path_split if part != "ng_state_view")
+                datapath = datapath.replace("/ng_state_view", "")
+                request.path = request.path.replace("/ng_state_view", "")
+                base_url = config.settings.get("neuroglancer", "url")
+                with open(datapath, "r") as f:
+                    state_dict = f.read()   # <- dict, not raw string
+                link_to_ng = base_url + "#!" + state_dict
+
                 return render_template(
                     "redirect.html",
                     gtag=config.settings.get("GA4", "gtag"),
