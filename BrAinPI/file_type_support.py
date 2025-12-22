@@ -29,7 +29,9 @@ def ng_links(req_path):
     file_type_supported = utils.is_file_type(file_types, req_path)
     
     if file_type_supported:
+        print('neuroglancer supported',req_path)
         new_path = req_path.replace(url_for('browse_fs'),url_for('neuro_glancer_entry'),1)
+        print('neuroglancer link', new_path)
         return new_path
     
     else:
@@ -47,6 +49,26 @@ def opsd_links(req_path):
         new_path = req_path.replace(url_for('browse_fs'),url_for('openseadragon_entry'),1)
         return new_path
     
+    else:
+        return None
+    
+def omezarr_links(req_path):
+    """
+    req_path is a string from the 'browse_fs' endpoint to a file.
+    If the file type is supported for omezarr
+    return the omezarr file entrypoint else return None
+    """
+    file_types = openSeadragon.openseadragon_dtypes() + neuroGlancer.neuroglancer_dtypes()
+    file_type_supported = utils.is_file_type(file_types, req_path)
+    if file_type_supported:
+        print('omezarr supported',req_path)
+        if req_path.startswith(url_for('neuro_glancer_entry')):
+            return req_path.replace(url_for('neuro_glancer_entry'),url_for('omezarr_entry'),1) + '.ome.zarr'
+        elif req_path.startswith(url_for('browse_fs')):
+            return req_path.replace(url_for('browse_fs'),url_for('omezarr_entry'),1) + '.ome.zarr'
+        else:
+            raise ValueError('omezarr_links req_path must contain either neuro_glancer_entry or browse_fs endpoint')
+
     else:
         return None
 

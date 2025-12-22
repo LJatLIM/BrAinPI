@@ -79,6 +79,7 @@
     data-ngslug="{{ current_path['files_ng_slug'][loop.index0] }}" 
     data-filesize="{{ current_path['files_size'][loop.index0] }}"
     data-opsdslug="{{current_path['files_opsd_slug'][loop.index0]}}"
+    data-omezarrslug="{{current_path['files_omezarr_slug'][loop.index0]}}"
     data-updated="{{ current_path['files_modtime'][loop.index0] }}" 
     data-bs-toggle="modal" data-bs-target="#brainModal">
     <span class="ms-4">{{ current_path['files_name'][loop.index0] }}</span>
@@ -115,6 +116,7 @@
           <a href="#" type="button" id="brainModalOpsdSlug" class="btn btn-primary btn-sm" target="opsdwindow">View on OSD</a>
           <a href="#" type="button" id="brainModalFileSlug" class="btn btn-primary btn-sm" target="dlwindow">Download</a>
           <a href="#" type="button" id="brainModalFileInfo" class="btn btn-primary btn-sm" target="nginfowindow">NG Info</a>
+          <a href="#" type="button" id="brainModalOmeZarrSlug" class="btn btn-primary btn-sm" target="omezarrwindow">OmeZarr</a>
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
           
         </div>
@@ -149,7 +151,7 @@ brainModalEl.addEventListener('show.bs.modal', function (event) {
   console.log('got modal, got dataset',event.relatedTarget.dataset);
   var bdata = event.relatedTarget.dataset;
   var fdata = JSON.parse(event.relatedTarget.dataset.fdata);
-  console.log('got fdata?',fdata.filename);
+  // console.log('got fdata?',fdata.files_omezarr_slug);
 
   event.target.querySelector('#brainModalLabel').innerHTML = fdata.files_name;
   event.target.querySelector('#brainModalUpdated').innerHTML = fdata.files_modtime;
@@ -162,7 +164,6 @@ brainModalEl.addEventListener('show.bs.modal', function (event) {
 var opsd_btn = event.target.querySelector('#brainModalOpsdSlug')
   if (fdata.files_opsd_slug)
 {
-  console.log('exist')
   opsd_btn.setAttribute('href',fdata.files_opsd_slug);
   opsd_btn.classList.remove('d-none');
 }
@@ -206,6 +207,21 @@ else{
   dl_btn.setAttribute('href',fdata.files_dl);
   dl_btn.classList.add('d-none');
   }
+
+// OmeZarr Button
+  var omezarr_btn = event.target.querySelector('#brainModalOmeZarrSlug')
+  if (fdata.files_omezarr_slug)
+{
+  // console.log('omezarr exist')
+  // console.log('omezarr link',fdata.files_omezarr_slug)
+  omezarr_btn.setAttribute('href',fdata.files_omezarr_slug);
+  omezarr_btn.classList.remove('d-none');
+  
+}  else{
+  omezarr_btn.setAttribute('href',fdata.files_omezarr_slug);
+  omezarr_btn.classList.add('d-none');
+  }
+  
   
   console.log('does target have href?',bdata.ngslug,event.target.querySelector('#brainModalNgSlug').href)
 
@@ -214,7 +230,29 @@ else{
 })
 
 
+document.getElementById('brainModalOmeZarrSlug').addEventListener('click', async function (e) {
+  e.preventDefault();
 
+  const href = this.getAttribute('href');
+  if (!href) return;
+
+  // Convert relative URL → full URL
+  const fullUrl = new URL(href, window.location.origin).href;
+
+  try {
+    await navigator.clipboard.writeText(fullUrl);
+
+    const originalText = this.textContent;
+    this.textContent = 'Copied ✅';
+
+    setTimeout(() => {
+      this.textContent = originalText;
+    }, 1500);
+
+  } catch (err) {
+    alert('Copy failed. Please try again.');
+  }
+});
   </script>
   
 {% endblock %}
