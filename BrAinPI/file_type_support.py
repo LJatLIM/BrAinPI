@@ -29,9 +29,9 @@ def ng_links(req_path):
     file_type_supported = utils.is_file_type(file_types, req_path)
     
     if file_type_supported:
-        print('neuroglancer supported',req_path)
+        # print('neuroglancer supported',req_path)
         new_path = req_path.replace(url_for('browse_fs'),url_for('neuro_glancer_entry'),1)
-        print('neuroglancer link', new_path)
+        # print('neuroglancer link', new_path)
         return new_path
     
     else:
@@ -61,7 +61,7 @@ def omezarr_links(req_path):
     file_types = openSeadragon.openseadragon_dtypes() + neuroGlancer.neuroglancer_dtypes()
     file_type_supported = utils.is_file_type(file_types, req_path)
     if file_type_supported:
-        print('omezarr supported',req_path)
+        # print('omezarr supported',req_path)
         if req_path.startswith(url_for('neuro_glancer_entry')):
             return req_path.replace(url_for('neuro_glancer_entry'),url_for('omezarr_entry'),1) + '.ome.zarr'
         elif req_path.startswith(url_for('browse_fs')):
