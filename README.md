@@ -22,8 +22,9 @@ pip install -e /path/to/cloned/repo/
 ## Before running BrAinPI
 
 '''
-Edit the settings_TEMPLATE.ini and groups_TEMPLATE.ini files and rename them to settings.ini and groups.ini.
-On limux machine, test the files allowed to be opened by ulimit -n. Increase it using ulimit -n 500000 if it's default 1024.
+Edit the template_settings.ini and template_groups.ini files and rename them to settings.ini and groups.ini.
+For localhost defaults, you can start from template_settings_localhost.ini instead of template_settings.ini.
+On linux machine, test the files allowed to be opened by ulimit -n. Increase it using ulimit -n 500000 if it's default 1024.
 '''
 
 ```
@@ -95,7 +96,7 @@ Outputs:
 
 ## "File Browser:
 
-A file browsing interface is availabe in BrAinPI at the "/browser" endpoint. At the root of the file browser, paths registered with BrAinPI appear according to their assigned names.  Paths exposed for anonymous visitors to BrAinPI can be made under [dir_anon].  Paths that should only be seen by authenticated users can be registered via [dir_auth]. 
+A file browsing interface is availabe in BrAinPI at the "/browser" endpoint. At the root of the file browser, paths registered with BrAinPI appear according to their assigned names.  Paths exposed for anonymous visitors to BrAinPI can be made under [dir_anon].  Paths that should only be seen by authenticated users can be registered via [dir_auth].
 
 
 
@@ -105,7 +106,7 @@ NOTE: Currently LDAP authentication can be configured only for windows active di
 
 
 
-In the examples below, the root of the browser path by anonymous browsers would show 'my_fav_location' 
+In the examples below, the root of the browser path by anonymous browsers would show 'my_fav_location'
 
 ```ini
 # settings.ini

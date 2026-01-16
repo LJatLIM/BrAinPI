@@ -507,7 +507,8 @@ def neuroglancer_dtypes():
         ".terafly",
         ".tif",
         ".tiff",
-        ".jp2"
+        ".jp2",
+        ".nd2"  # Nikon nd2 files
     ]
 
 

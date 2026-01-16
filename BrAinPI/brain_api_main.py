@@ -184,9 +184,9 @@ def add_header(response):
 # Enable system to be run in development mode with debug (auto reload) on by running this scripy directly
 if __name__ == '__main__':
     if os.name == 'nt':
-        app.run(host='0.0.0.0',port=5001,debug=True)
+        app.run(host='0.0.0.0',port=5001,debug=False)
     else:
-        app.run(host='0.0.0.0',port=5001,debug=True)
+        app.run(host='0.0.0.0',port=5001,debug=False)
 
 
 # Request parameters notes
@@ -196,7 +196,7 @@ if __name__ == '__main__':
 # base_url         http://www.example.com/myapplication/foo/page.html
 # url              http://www.example.com/myapplication/foo/page.html?x=y
 # url_root         http://www.example.com/myapplication/
-    
-    
-    
-    
+
+
+
+

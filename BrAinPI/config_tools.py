@@ -19,13 +19,13 @@ def get_config(file='settings.ini',allow_no_value=True):
     Load configuration settings from the created setting.ini file.
 
     This function reads configuration settings from a specified settings,ini file.
-    It is primarily used for loading settings. It can be used for Sphinx 
-    documentation generation if the file does not exist, it will fall back to a 
+    It is primarily used for loading settings. It can be used for Sphinx
+    documentation generation if the file does not exist, it will fall back to a
     template version of the file.
 
     Args:
         file (str, optional): The name of the INI file to load. Defaults to 'settings.ini'.
-        allow_no_value (bool, optional): Whether to allow keys without values in the INI file. 
+        allow_no_value (bool, optional): Whether to allow keys without values in the INI file.
                                          Defaults to True.
 
     Returns:
@@ -41,13 +41,13 @@ def get_config(file='settings.ini',allow_no_value=True):
     config = configparser.ConfigParser(allow_no_value=allow_no_value)
     config.read(file_path)
     return config
-    
+
 def get_pyramid_images_connection(settings):
     """
     Build a connection mapping for pyramid image directories and files.
 
-    This function walks through a specified directory (from settings) to locate 
-    NIfTI and TIFF files/directories based on their extensions. It builds a 
+    This function walks through a specified directory (from settings) to locate
+    NIfTI and TIFF files/directories based on their extensions. It builds a
     mapping of unique hash values (derived from files) to their corresponding paths.
 
     Args:
@@ -147,13 +147,13 @@ class config:
                 logger.info('opening ims object')
                 self.opendata[key].open()
             self.opendata_set.add(dataPath)
-                
+
         elif dataPath.endswith('.ome.zarr'):
             from ome_zarr_loader import ome_zarr_loader
             self.opendata[key] = ome_zarr_loader(
-                dataPath, 
-                squeeze=False, 
-                zarr_store_type=NestedDirectoryStore, 
+                dataPath,
+                squeeze=False,
+                zarr_store_type=NestedDirectoryStore,
                 cache=self.cache
                 )
             # self.opendata[dataPath].isomezarr = True
@@ -162,18 +162,18 @@ class config:
         elif '.omezans' in os.path.split(dataPath)[-1]:
             from ome_zarr_loader import ome_zarr_loader
             self.opendata[key] = ome_zarr_loader(
-                dataPath, 
-                squeeze=False, 
-                zarr_store_type=Archived_Nested_Store, 
+                dataPath,
+                squeeze=False,
+                zarr_store_type=Archived_Nested_Store,
                 cache=self.cache
                 )
             self.opendata_set.add(dataPath)
         elif '.omehans' in os.path.split(dataPath)[-1]:
             from ome_zarr_loader import ome_zarr_loader
             self.opendata[key] = ome_zarr_loader(
-                dataPath, 
-                squeeze=False, 
-                zarr_store_type=H5_Nested_Store, 
+                dataPath,
+                squeeze=False,
+                zarr_store_type=H5_Nested_Store,
                 cache=self.cache
                 )
             self.opendata_set.add(dataPath)
@@ -183,8 +183,8 @@ class config:
             #                                           cache=self.cache)
             from s3_utils import s3_boto_store
             self.opendata[key] = ome_zarr_loader(
-                dataPath, 
-                squeeze=False, 
+                dataPath,
+                squeeze=False,
                 zarr_store_type=s3_boto_store,
                 cache=self.cache
                 )
@@ -194,7 +194,7 @@ class config:
             self.opendata[key] = tiff_loader.tiff_loader(
                 dataPath,
                 True,
-                self.pyramid_images_connection, 
+                self.pyramid_images_connection,
                 self.settings.get("tif_loader", "pyramids_images_allowed_store_size_gb"),
                 self.settings.get("tif_loader", "pyramids_images_allowed_generation_size_gb"),
                 self.settings.get("tif_loader", "pyramids_images_store"),
@@ -206,7 +206,7 @@ class config:
         elif dataPath.lower().endswith('.terafly'):
             import terafly_loader
             self.opendata[key] = terafly_loader.terafly_loader(
-                dataPath, 
+                dataPath,
                 squeeze=False,
                 cache=self.cache
                 )
@@ -214,7 +214,7 @@ class config:
         elif dataPath.lower().endswith('.nii.zarr') or dataPath.lower().endswith('.nii.gz') or dataPath.lower().endswith('.nii'):
             import nifti_loader
             self.opendata[key] = nifti_loader.nifti_zarr_loader(
-                dataPath, 
+                dataPath,
                 self.pyramid_images_connection,
                 self.settings.get("nifti_loader", "pyramids_images_allowed_store_size_gb"),
                 self.settings.get("nifti_loader", "pyramids_images_allowed_generation_size_gb"),
@@ -237,6 +237,12 @@ class config:
                 squeeze=False,
                 cache=self.cache
                 )
+            self.opendata_set.add(dataPath)
+        elif dataPath.lower().endswith('.nd2'):
+            import nd2_loader
+            logger.info('Creating nd2 object')
+            self.opendata[key] = nd2_loader.nd2_loader(dataPath, squeeze_output=False, cache=self.cache)
+            self.opendata[key].open()
             self.opendata_set.add(dataPath)
         ## Append extracted metadata as attribute to open dataset
         try:
