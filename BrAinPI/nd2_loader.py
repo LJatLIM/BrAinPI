@@ -584,20 +584,45 @@ class nd2_loader:
         stop = max(0, min(size, stop))
         return slice(start, stop, step)
 
+    def _set_time_key_metadata(self, time_key_names, time_keys) -> None:
+        """
+        Store time-key metadata for mapping multidimensional time axes.
+        """
+        self.time_key_names = [str(n).lower() for n in (time_key_names or [])]
+        self.time_keys = []
+        self.time_key_index = {}
+        for idx, key in enumerate(time_keys or []):
+            if not isinstance(key, tuple):
+                key = (key,)
+            self.time_keys.append(key)
+            self.time_key_index[key] = idx
+
+        self.time_key_values = {}
+        for idx, name in enumerate(self.time_key_names):
+            values = {key[idx] for key in self.time_keys}
+            self.time_key_values[name] = sorted(values)
+
+        self.TPoints = len(self.time_key_values.get("t", [0]))
+        self.MPoints = len(self.time_key_values.get("m", [0]))
+
     def _build_sequence_map(self) -> tuple[dict[tuple[int, int], int], list[tuple], int]:
         exp = self.image.experiment
         frame_count = self._attrs.frameCount
         if exp is None:
+            time_key_names = ["t"]
             time_keys = [(i,) for i in range(frame_count)]
             seq_map = {(i, 0): i for i in range(frame_count)}
+            self._set_time_key_metadata(time_key_names, time_keys)
             return seq_map, time_keys, 1
 
         loop_names = list(exp.dimnames(skipSpectralLoop=True))
         time_key_names = [n for n in loop_names if n != "z"]
         loop_indexes = self.image.generateLoopIndexes(named=True)
         if not loop_indexes:
+            time_key_names = ["t"]
             time_keys = [(i,) for i in range(frame_count)]
             seq_map = {(i, 0): i for i in range(frame_count)}
+            self._set_time_key_metadata(time_key_names, time_keys)
             return seq_map, time_keys, 1
 
         time_keys = []
@@ -614,4 +639,5 @@ class nd2_loader:
             t_idx = time_key_to_index[time_key]
             seq_map[(t_idx, z_idx)] = seq_index
 
+        self._set_time_key_metadata(time_key_names, time_keys)
         return seq_map, time_keys, z_max + 1

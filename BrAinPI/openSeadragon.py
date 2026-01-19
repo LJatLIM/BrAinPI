@@ -17,6 +17,71 @@ import cv2
 import re
 import json
 
+def _get_channel_window(img_obj, channel_index):
+    """
+    Return the window (start, end) for a channel if omero metadata is present.
+    """
+    try:
+        omero = getattr(img_obj, "omero", None)
+        if not omero:
+            return None
+        channels = omero.get("channels", [])
+        if channel_index < 0 or channel_index >= len(channels):
+            return None
+        window = channels[channel_index].get("window", {})
+        start = window.get("start")
+        end = window.get("end")
+        if start is None or end is None:
+            return None
+        return float(start), float(end)
+    except Exception:
+        return None
+
+
+def _window_to_uint8(chunk, window):
+    """
+    Scale a chunk into uint8 using a (start, end) window.
+    """
+    start, end = window
+    if end <= start:
+        return utils.conv_np_dtypes(chunk, "uint8")
+    chunk = np.clip(chunk, start, end)
+    chunk = (chunk - start) / (end - start)
+    chunk = np.clip(chunk, 0.0, 1.0)
+    return (chunk * 255.0).astype(np.uint8)
+
+def _build_time_index_map(img_obj):
+    """
+    Build mapping for multidimensional time axes (t/m) to linear time index.
+    """
+    time_keys = getattr(img_obj, "time_keys", None)
+    time_key_names = getattr(img_obj, "time_key_names", None)
+    if not time_keys or not time_key_names:
+        return None, None, None
+    names = [str(n).lower() for n in time_key_names]
+    if any(name not in ("t", "m") for name in names):
+        return None, None, None
+
+    name_index = {name: idx for idx, name in enumerate(names)}
+    t_values = (
+        sorted({int(key[name_index["t"]]) for key in time_keys})
+        if "t" in name_index
+        else [0]
+    )
+    m_values = (
+        sorted({int(key[name_index["m"]]) for key in time_keys})
+        if "m" in name_index
+        else [0]
+    )
+
+    time_index_map = {}
+    for idx, key in enumerate(time_keys):
+        t_val = int(key[name_index["t"]]) if "t" in name_index else 0
+        m_val = int(key[name_index["m"]]) if "m" in name_index else 0
+        time_index_map[f"{t_val}:{m_val}"] = idx
+
+    return t_values, m_values, time_index_map
+
 def openseadragon_dtypes():
     """
     Returns a list of supported file extensions for OpenSeadragon.
@@ -24,7 +89,16 @@ def openseadragon_dtypes():
     Returns:
         list: A list of supported file extensions.
     """
-    return [".tif", ".tiff", ".ome.tif", ".ome.tiff", ".ome-tif", ".ome-tiff", ".jp2"]
+    return [
+        ".tif",
+        ".tiff",
+        ".ome.tif",
+        ".ome.tiff",
+        ".ome-tif",
+        ".ome-tiff",
+        ".jp2",
+        ".nd2",
+    ]
 
 
 # def calculate_hash(input_string):
@@ -115,6 +189,15 @@ def setup_openseadragon(app, config):
                     )
                     img_obj = config.opendata[datapath_key]
                 # logger.info(img_obj.metadata.get('datapath'))
+                t_values, m_values, time_index_map = _build_time_index_map(img_obj)
+                if t_values:
+                    t_point = len(t_values)
+                else:
+                    t_point = int(img_obj.metadata.get('TimePoints'))
+                if m_values:
+                    m_point = len(m_values)
+                else:
+                    m_point = 1
                 return render_template(
                     "openseadragon_temp.html",
                     height=int(img_obj.metadata.get('shape')[-2]),
@@ -126,7 +209,11 @@ def setup_openseadragon(app, config):
                     tileWidth=img_obj.metadata.get('chunks')[-1],
                     host=config.settings.get("app", "url"),
                     parent_url="/".join(path_split),
-                    t_point=img_obj.metadata.get('TimePoints'),
+                    t_point=t_point,
+                    t_point_values=t_values,
+                    m_point=m_point,
+                    m_point_values=m_values,
+                    time_index_map=time_index_map,
                     channel=img_obj.metadata.get('Channels'),
                     z_stack=img_obj.metadata.get('shape')[-3],
                     resolutionlevels=img_obj.metadata.get('ResolutionLevels') - 1,
@@ -182,6 +269,14 @@ def setup_openseadragon(app, config):
                                 ]
                 logger.info(chunk.shape)
                 chunk = np.squeeze(chunk)
+                if chunk.dtype != np.uint8:
+                    window = _get_channel_window(img_obj, c)
+                    if window is not None:
+                        chunk = _window_to_uint8(chunk, window)
+                    elif (
+                        str(img_obj.metadata.get("datapath", "")).lower().endswith(".nd2")
+                    ):
+                        chunk = utils.conv_np_dtypes(chunk, "uint8")
                 if len(chunk.shape) == 3 and chunk.shape[2] == 3:  # Color image
                     chunk = cv2.cvtColor(chunk, cv2.COLOR_RGB2BGR)
 

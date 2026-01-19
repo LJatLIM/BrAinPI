@@ -94,10 +94,30 @@
     <div id="select_wrapper">
     Time Point
     <select id="t_point_select">
+      {% if t_point_values %}
+      {% for t in t_point_values %}
+      <option value="{{ t }}" {% if loop.index0==0 %} selected {% endif %}> {{ t }}</option>
+      {% endfor %}
+      {% else %}
       {% for t in range(t_point) %}
       <option value="{{ t }}" {% if t==0 %} selected {% endif %}> {{ t }}</option>
       {% endfor %}
+      {% endif %}
     </select>
+    {% if m_point and m_point|int > 1 %}
+    M Point
+    <select id="m_point_select">
+      {% if m_point_values %}
+      {% for m in m_point_values %}
+      <option value="{{ m }}" {% if loop.index0==0 %} selected {% endif %}> {{ m }}</option>
+      {% endfor %}
+      {% else %}
+      {% for m in range(m_point) %}
+      <option value="{{ m }}" {% if m==0 %} selected {% endif %}> {{ m }}</option>
+      {% endfor %}
+      {% endif %}
+    </select>
+    {% endif %}
     Channel
     <select id="channelSelect">
       {% for channel in range(channel) %}
@@ -114,7 +134,11 @@
       Non-standard axes (if existed) will be wrapped to T axe (Time Point) for display purpose
     </div> -->
       <div style="display: inline-block; font-size: 15px; color: #31708f; background-color: #d9edf7; padding: 5px 10px; border: 1px solid #bce8f1; border-radius: 4px; margin-left: 10px; vertical-align: middle;">
+      {% if m_point and m_point|int > 1 %}
+      Support axes TCZYXM
+      {% else %}
       Support standard axes TCZYX
+      {% endif %}
     </div>
   </div>
   </div>
@@ -124,7 +148,18 @@
     var viewer;
     // const maxLevel = Math.ceil(Math.log2(Math.max('{{ width }}',' {{ height }}') / '{{tileHeight}}'));
     const maxLevel = parseInt('{{resolutionlevels}}');
-    function initializeViewer(t_point, channel, z_stack) {
+    var timeIndexMap = {{ time_index_map | tojson }};
+    function getTimeIndex(t_point, m_point) {
+      if (timeIndexMap) {
+        var key = t_point + ":" + m_point;
+        if (timeIndexMap.hasOwnProperty(key)) {
+          return timeIndexMap[key];
+        }
+      }
+      return t_point;
+    }
+
+    function initializeViewer(t_point, m_point, channel, z_stack) {
       viewer = OpenSeadragon({
         id: "viewer",
         // Optional: set prefixUrl for OpenSeadragon images (e.g., zoom in/out icons)
@@ -134,11 +169,12 @@
         showNavigator: true, // Enable the image navigator control
         navigatorPosition: 'TOP_RIGHT', // Set the position of the image navigator
         navigatorSizeRatio: 0.2,
-        tileSources: generateTileSource(t_point, channel, z_stack)
+        tileSources: generateTileSource(t_point, m_point, channel, z_stack)
       });
     }
 
-    function generateTileSource(t_point, channel, z_stack) {
+    function generateTileSource(t_point, m_point, channel, z_stack) {
+      var timeIndex = getTimeIndex(t_point, m_point);
       return {
         height: parseInt('{{ height }}'),
         width: parseInt('{{ width }}'),
@@ -154,18 +190,28 @@
           //   reversedLevel + "/" + t_point + "/" + channel + "/" + z_stack + "/" + y + "/" + x + "/" + "r" +
           //   reversedLevel + "-t" + t_point + "-c" + channel + "-z" + z_stack + "-y" + y + "-x" + x + ".png";
           return "{{host}}/{{parent_url}}/" +
-        reversedLevel + "/" + t_point + "/" + channel + "/" + z_stack  + "_" + (y * parseInt('{{ tileHeight }}')) + "-" + ((y+1) * parseInt('{{ tileHeight }}')) + "_" + (x * parseInt('{{ tileWidth }}')) +"-"+ ((x+1) * parseInt('{{ tileWidth }}'));
+        reversedLevel + "/" + timeIndex + "/" + channel + "/" + z_stack  + "_" + (y * parseInt('{{ tileHeight }}')) + "-" + ((y+1) * parseInt('{{ tileHeight }}')) + "_" + (x * parseInt('{{ tileWidth }}')) +"-"+ ((x+1) * parseInt('{{ tileWidth }}'));
         }
       };
     }
 
-    function updateViewer(selected_t_point, selectedChannel, selected_z_stack) {
-      viewer.open(generateTileSource(selected_t_point, selectedChannel, selected_z_stack));
+    function updateViewer(selected_t_point, selected_m_point, selectedChannel, selected_z_stack) {
+      viewer.open(generateTileSource(selected_t_point, selected_m_point, selectedChannel, selected_z_stack));
     }
 
     // Initialize the viewer with the default channel
-    initializeViewer(0, 0, 0);
+    var defaultTPoint = {{ (t_point_values[0] if t_point_values else 0) | tojson }};
+    var defaultMPoint = {{ (m_point_values[0] if m_point_values else 0) | tojson }};
+    initializeViewer(defaultTPoint, defaultMPoint, 0, 0);
     document.addEventListener("DOMContentLoaded", function () {
+      function getSelectedMPoint() {
+        var mSelect = document.getElementById("m_point_select");
+        if (!mSelect) {
+          return 0;
+        }
+        return parseInt(mSelect.value);
+      }
+
       // Add event listener for channel selection change
       var channelSelect = document.getElementById("channelSelect");
       if (channelSelect) {
@@ -173,7 +219,8 @@
           var selectedChannel = parseInt(event.target.value);
           var selectedZStack = parseInt(document.getElementById("z_stack_select").value);
           var selectedTpoint = parseInt(document.getElementById("t_point_select").value);
-          updateViewer(selectedTpoint, selectedChannel, selectedZStack);
+          var selectedMpoint = getSelectedMPoint();
+          updateViewer(selectedTpoint, selectedMpoint, selectedChannel, selectedZStack);
         });
       }
 
@@ -184,7 +231,8 @@
           var selectedTpoint = parseInt(document.getElementById("t_point_select").value);
           var selectedZStack = parseInt(event.target.value);
           var selectedChannel = parseInt(document.getElementById("channelSelect").value);
-          updateViewer(selectedTpoint, selectedChannel, selectedZStack);
+          var selectedMpoint = getSelectedMPoint();
+          updateViewer(selectedTpoint, selectedMpoint, selectedChannel, selectedZStack);
         });
       }
 
@@ -194,7 +242,19 @@
           var selectedTpoint = parseInt(event.target.value);
           var selectedZStack = parseInt(document.getElementById("z_stack_select").value);
           var selectedChannel = parseInt(document.getElementById("channelSelect").value);
-          updateViewer(selectedTpoint, selectedChannel, selectedZStack);
+          var selectedMpoint = getSelectedMPoint();
+          updateViewer(selectedTpoint, selectedMpoint, selectedChannel, selectedZStack);
+        });
+      }
+
+      var mPointSelect = document.getElementById("m_point_select");
+      if (mPointSelect) {
+        mPointSelect.addEventListener("change", function (event) {
+          var selectedMpoint = parseInt(event.target.value);
+          var selectedTpoint = parseInt(document.getElementById("t_point_select").value);
+          var selectedZStack = parseInt(document.getElementById("z_stack_select").value);
+          var selectedChannel = parseInt(document.getElementById("channelSelect").value);
+          updateViewer(selectedTpoint, selectedMpoint, selectedChannel, selectedZStack);
         });
       }
     });
